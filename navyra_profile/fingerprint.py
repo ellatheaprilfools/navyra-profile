@@ -24,11 +24,12 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-
 import numpy as np
 
 FINGERPRINT_BITS = 64
 _RNG_SEED = 1337  # fixed so fingerprints are reproducible across runs
+_WEIGHTS = np.uint64(1) << np.arange(FINGERPRINT_BITS, dtype=np.uint64)
+
 
 
 # --------------------------------------------------------------------------
@@ -116,13 +117,29 @@ class Fingerprinter:
                      batch_size: int = 256) -> np.ndarray:
         """Returns uint64 array [n] of fingerprints."""
         out = np.empty(len(texts), dtype=np.uint64)
+
+        # ADDED EDIT - ELLA
+        # caching the projection matrix in local var to avoid re-generating it for each batch
+
+        proj_matrix = None
+
         for i in range(0, len(texts), batch_size):
             chunk = texts[i:i + batch_size]
-            emb = self.backend.embed(chunk)                # [b, d]
-            proj = emb @ self._projection(emb.shape[1])    # [b, 64]
+            emb = self.backend.embed(chunk)                # [b, d] 
+            
+            #Added EDIT - ELLA
+            # calling self._projection only once per batch 
+            if proj_matrix is None:
+                proj_matrix = self._projection(emb.shape[1])
+
+            proj = emb @ proj_matrix    # [b, 64]
             bits = (proj > 0).astype(np.uint64)            # [b, 64]
-            weights = (np.uint64(1) << np.arange(64, dtype=np.uint64))
-            out[i:i + len(chunk)] = (bits * weights).sum(axis=1)
+            
+        #Added EDIT - ELLA
+        # using _WEIGHTS instead of generating it for each batch  
+
+            out[i:i + len(chunk)] = (bits * _WEIGHTS).sum(axis=1)
+        
         return out
 
 
