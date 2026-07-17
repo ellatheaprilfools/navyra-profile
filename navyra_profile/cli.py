@@ -14,6 +14,7 @@ import argparse
 from .analyser import analyse
 from .fingerprint import Fingerprinter
 import json
+import sys
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog= "navyra-profile")
@@ -37,20 +38,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
-def _cmd_analyse(args):
+def _read_prompts(path, field):
     prompts = []
-    with open(args.file) as f:
-        for line in f:
-            obj = json.loads(line)
-            prompts.append(obj[args.field])
+    with open(path) as f:
+        for line_no, line in enumerate(f, start=1):
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{line_no}: not valid JSON ({e.msg})") from e
 
+            if field not in obj:
+                raise ValueError(
+                    f"{path}:{line_no}: missing field '{field}' "
+                    f"(found: {list(obj.keys())})"
+                )
+            prompts.append(obj[field])
+    return prompts
+
+
+def _cmd_analyse(args):
+    prompts = _read_prompts(args.file, args.field)
     report = analyse(prompts, radius=args.radius)
     print(report.summary())
+
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    _cmd_analyse(args)
-
+    try:
+        _cmd_analyse(args)
+    except FileNotFoundError as e:
+        print(f"error: file not found: {e.filename}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"error: {e}")
+        sys.exit(1)
+    
 if __name__ == "__main__":
     main()
