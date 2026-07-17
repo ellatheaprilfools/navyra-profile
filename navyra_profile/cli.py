@@ -10,5 +10,34 @@ PROJECT TASK 2 (part of packaging). Target UX:
 Use argparse or typer. JSONL in, report out. Errors should be friendly.
 """
 
+import argparse
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog= "navyra-profile")
+    sub = parser.add_subparsers(dest="command", required=True) #has to add analyse or synth
+    
+    p_analyse = sub.add_parser("analyse")
+    p_analyse.add_argument("file", help="path to a JSONL file of prompts")
+
+    p_analyse.add_argument( #optional
+        "--field",
+        default="prompt",
+        help="JSON field containing the prompt text",
+    )
+
+    p_analyse.add_argument(
+        "--radius", 
+        type=int,
+        default=6,#defaulted to 6
+        help="Hamming-distance threshold for a semantic hit",
+    )
+
+    return parser
+
 def main() -> None:
-    raise NotImplementedError("Project task 2 — see docstring")
+    parser = build_parser()
+    args = parser.parse_args()
+    print(args)
+
+if __name__ == "__main__":
+    main()
