@@ -1,7 +1,7 @@
 """Starter tests — extend substantially (project task 5 includes tests)."""
 import numpy as np
 from navyra_profile.fingerprint import Fingerprinter, HashingBackend, hamming
-from navyra_profile.analyzer import analyse
+from navyra_profile.analyser import analyse
 
 
 def test_identical_texts_identical_fingerprints():
