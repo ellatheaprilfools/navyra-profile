@@ -11,6 +11,9 @@ Use argparse or typer. JSONL in, report out. Errors should be friendly.
 """
 
 import argparse
+from .analyser import analyse
+from .fingerprint import Fingerprinter
+import json
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog= "navyra-profile")
@@ -34,10 +37,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+def _cmd_analyse(args):
+    prompts = []
+    with open(args.file) as f:
+        for line in f:
+            obj = json.loads(line)
+            prompts.append(obj[args.field])
+
+    report = analyse(prompts, radius=args.radius)
+    print(report.summary())
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    print(args)
+    _cmd_analyse(args)
 
 if __name__ == "__main__":
     main()
