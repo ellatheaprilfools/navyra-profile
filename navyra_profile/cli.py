@@ -66,7 +66,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        _cmd_analyse(args)
+        args.func(args)
     except FileNotFoundError as e:
         print(f"error: file not found: {e.filename}")
         sys.exit(1)
