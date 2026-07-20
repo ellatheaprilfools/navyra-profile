@@ -18,7 +18,6 @@ from .analyser import analyse
 from .fingerprint import Fingerprinter
 
 
-
 def _read_prompts(path, field):
     prompts = []
     with open(path) as f:
@@ -96,6 +95,10 @@ def main() -> None:
         print(f"error: file not found: {e.filename}")
         sys.exit(1)
     except ValueError as e:
+        print(f"error: {e}")
+        sys.exit(1)
+    
+    except NotImplementedError as e:
         print(f"error: {e}")
         sys.exit(1)
     

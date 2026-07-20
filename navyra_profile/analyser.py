@@ -56,7 +56,7 @@ class TrafficReport:
 
     def summary(self) -> str:
         lines = [
-            f"prompts analssed          : {self.n_prompts:,}",
+            f"prompts analysed          : {self.n_prompts:,}",
             f"T1 exact repeats          : {self.exact_repeat_rate:.1%}  "
             f"(already free via prefix caching)",
             f"T2 same-bucket semantic   : {self.would_hit_rate:.1%}  "
