@@ -51,6 +51,7 @@ class TrafficReport:
     n_clusters: int = 0
     top_cluster_share: float = 0.0
     cluster_sizes: list = field(default_factory=list)
+    warmup_history: list = field(default_factory=list)
     radius: int = 6
     notes: str = ""
 
@@ -68,6 +69,7 @@ class TrafficReport:
             f"semantic clusters         : {self.n_clusters:,}",
             f"traffic in top cluster    : {self.top_cluster_share:.1%}",
         ]
+
         if self.hit_rate_by_bucket:
             lines.append("hit rate by length bucket:")
             for b, (hr, n) in sorted(self.hit_rate_by_bucket.items()):
@@ -104,6 +106,12 @@ def analyse(prompts: list[str],
     def _norm(p): return " ".join(p.lower().split())
     seen_exact: set = set()
     exact = np.zeros(len(prompts), dtype=bool)
+
+    warmup_history = []
+    sem_seen = 0
+    hits_seen = 0
+    checkpoint_every = max(1, len(prompts) // 100)
+
     for i, p in enumerate(prompts):
         hsh = _h.md5(_norm(p).encode()).hexdigest()
         if hsh in seen_exact:
@@ -159,12 +167,19 @@ def analyse(prompts: list[str],
             bank.append(i)
             bank_by_bucket.setdefault(b, []).append(i)
 
+        sem_seen += 1
+        if matched:
+            hits_seen += 1
+        if sem_seen % checkpoint_every == 0:
+            warmup_history.append((i, hits_seen / sem_seen))
+
     sizes = np.bincount(cluster_of[cluster_of >= 0])
     sizes_sorted = sorted(sizes.tolist(), reverse=True)
 
     n_sem = int((~exact).sum())     # prompts entering semantic tiers
     return TrafficReport(
         n_prompts=len(prompts),
+        warmup_history=warmup_history,
         exact_repeat_rate=float(exact.mean()),
         cross_bucket_rate=cross_hits / max(1, n_sem),
         near_dup_count=len(near_dups),
