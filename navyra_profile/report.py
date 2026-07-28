@@ -82,6 +82,45 @@ def _waterfall_chart(report: TrafficReport) -> str:
     fig.tight_layout()
     return _fig_to_base64(fig)
 
+def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
+    if not report.hit_rate_by_bucket:
+        return ""
+
+    buckets = sorted(report.hit_rate_by_bucket)
+    rates = [report.hit_rate_by_bucket[b][0] for b in buckets]
+    counts = [report.hit_rate_by_bucket[b][1] for b in buckets]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    bars = ax.bar([str(b) for b in buckets], rates, color="#2E7DAF")
+
+    for bar, n in zip(bars, counts):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                 f"n={n}", ha="center", va="bottom", fontsize=8)
+
+    ax.set_ylim(0, max(rates + [0.1]) * 1.25)
+    ax.set_xlabel("Prompt length bucket (tokens)")
+    ax.set_ylabel("Same-bucket hit rate")
+    ax.set_title("Hit rate by length bucket")
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+def _cluster_size_chart(report: TrafficReport) -> str:
+    if not report.cluster_sizes:
+        return ""
+    top = report.cluster_sizes[:20]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(range(1, len(top) + 1), top, color="#6C5B7B")
+    ax.set_xlabel("Cluster rank (largest first)")
+    ax.set_ylabel("Prompts in cluster")
+    ax.set_title(
+        f"Cluster size distribution "
+        f"({report.n_clusters:,} clusters total, "
+        f"top cluster = {report.top_cluster_share:.1%} of traffic)"
+    )
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
 
 def html_report(report, path: str) -> None:
     raise NotImplementedError("Project task 3 — see docstring")
