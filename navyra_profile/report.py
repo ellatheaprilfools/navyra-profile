@@ -32,11 +32,30 @@ import difflib
 import html
 import io
 from datetime import datetime, timezone
+import difflib
+import html as html_module
  
 import matplotlib
 matplotlib.use("Agg")  
 import matplotlib.pyplot as plt
 from .analyser import TrafficReport
+
+_CSS = """
+body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 900px;
+       margin: 40px auto; color: #222; line-height: 1.5; }
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.2em; margin-top: 2em; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+img { max-width: 100%; display: block; margin: 12px 0; }
+.meta { color: #666; font-size: 0.9em; }
+.risk-box { background: #fff6e5; border: 1px solid #e0b84b; border-radius: 6px;
+            padding: 16px; margin-top: 12px; }
+.near-dup-list { list-style: none; padding: 0; }
+.near-dup-list li { border-top: 1px solid #eee; padding: 8px 0; font-family: monospace;
+                     font-size: 0.9em; }
+mark { background: #ffcccc; padding: 0 2px; }
+pre.summary { background: #f6f6f6; padding: 12px; border-radius: 6px; overflow-x: auto; }
+.note { font-size: 0.85em; color: #555; font-style: italic; }
+"""
  
 
 def _fig_to_base64(fig) -> str:
@@ -121,6 +140,98 @@ def _cluster_size_chart(report: TrafficReport) -> str:
     fig.tight_layout()
     return _fig_to_base64(fig)
 
+def _warmup_chart(report: TrafficReport) -> str:
+    history = getattr(report, "warmup_history", [])
+    if not history:
+        return ""
+    xs, ys = zip(*history)
 
-def html_report(report, path: str) -> None:
-    raise NotImplementedError("Project task 3 — see docstring")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(xs, [y * 100 for y in ys], color="#2E7DAF", linewidth=2)
+    ax.set_xlabel("Prompts processed")
+    ax.set_ylabel("Cumulative T2 hit rate (%)")
+    ax.set_title("Cache warm-up curve")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    return _fig_to_base64(fig)
+
+
+def _highlight_diff(a: str, b: str) -> tuple[str, str]:
+    a_words, b_words = a.split(), b.split()
+    sm = difflib.SequenceMatcher(None, a_words, b_words)
+    out_a, out_b = [], []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        a_chunk = html_module.escape(" ".join(a_words[i1:i2]))
+        b_chunk = html_module.escape(" ".join(b_words[j1:j2]))
+        if tag == "equal":
+            out_a.append(a_chunk)
+            out_b.append(b_chunk)
+        else:
+            if a_chunk:
+                out_a.append(f"<mark>{a_chunk}</mark>")
+            if b_chunk:
+                out_b.append(f"<mark>{b_chunk}</mark>")
+    return " ".join(out_a), " ".join(out_b)
+
+def _near_dup_box(report: TrafficReport) -> str:
+    if not report.near_dup_examples:
+        return "<p>No near-duplicate risk pairs found in this sample.</p>"
+
+    rows = []
+    for a, b in report.near_dup_examples:
+        a_hl, b_hl = _highlight_diff(a, b)
+        rows.append(f"<li><div>{a_hl}</div><div>{b_hl}</div></li>")
+
+    return (
+        "<p>These prompt pairs are nearly identical in fingerprint but differ "
+        "in specific details (highlighted). A whole-answer cache would risk "
+        "serving one prompt's answer for the other — this is why answer-replay "
+        "caching is unsafe on this traffic:</p>"
+        f"<ul class='near-dup-list'>{''.join(rows)}</ul>"
+    )
+
+def html_report(report: TrafficReport, path: str) -> None:
+    """Render a self-contained HTML report for `report` and write it to `path`."""
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    waterfall_img = _waterfall_chart(report)
+    bucket_img = _hit_rate_by_bucket_chart(report)
+    cluster_img = _cluster_size_chart(report)
+    warmup_img = _warmup_chart(report)
+    near_dup_html = _near_dup_box(report)
+
+    parts = [
+        f"<html><head><meta charset='utf-8'><style>{_CSS}</style></head><body>",
+        "<h1>Navyra Traffic Profile</h1>",
+        f"<p class='meta'>Generated {generated} · {report.n_prompts:,} prompts analysed"
+        f" · match radius {report.radius}</p>",
+
+        "<h2>Tiered waterfall</h2>",
+        f"<img src='data:image/png;base64,{waterfall_img}'>",
+        "<p class='note'>T2 is an upper-bound proxy: up to this share of traffic is "
+        "engine-addressable today. It is not a promised saving — the true hit rate "
+        "is gated inside the model and measured in the free trial.</p>",
+    ]
+
+    if bucket_img:
+        parts += ["<h2>Hit rate by length bucket</h2>",
+                  f"<img src='data:image/png;base64,{bucket_img}'>"]
+    if cluster_img:
+        parts += ["<h2>Cluster size distribution</h2>",
+                  f"<img src='data:image/png;base64,{cluster_img}'>"]
+    if warmup_img:
+        parts += ["<h2>Cache warm-up curve</h2>",
+                  f"<img src='data:image/png;base64,{warmup_img}'>"]
+
+    parts += [
+        "<h2>Near-duplicate risk</h2>",
+        f"<div class='risk-box'>{near_dup_html}</div>",
+
+        "<h2>Full summary</h2>",
+        f"<pre class='summary'>{html.escape(report.summary())}</pre>",
+
+        "</body></html>",
+    ]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(parts))
