@@ -39,6 +39,7 @@ import matplotlib
 matplotlib.use("Agg")  
 import matplotlib.pyplot as plt
 from .analyser import TrafficReport
+from matplotlib.backends.backend_pdf import PdfPages
 
 _CSS = """
 body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 900px;
@@ -66,7 +67,7 @@ def _fig_to_base64(fig) -> str:
     plt.close(fig)
     return encoded
 
-def _waterfall_chart(report: TrafficReport) -> str:
+def _build_waterfall_chart(report: TrafficReport) -> str:
     """Return a base64-encoded PNG of the waterfall chart."""
     t1 = report.exact_repeat_rate
     sem_share = 1.0 - t1 
@@ -99,9 +100,13 @@ def _waterfall_chart(report: TrafficReport) -> str:
     ax.set_ylabel("Share of total traffic")
     ax.set_title("Tiered waterfall: where your traffic actually goes")
     fig.tight_layout()
+    return fig 
+
+def _waterfall_chart(report: TrafficReport) -> str:
+    fig = _build_waterfall_chart(report)
     return _fig_to_base64(fig)
 
-def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
+def _build_hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     if not report.hit_rate_by_bucket:
         return ""
 
@@ -121,9 +126,16 @@ def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     ax.set_ylabel("Same-bucket hit rate")
     ax.set_title("Hit rate by length bucket")
     fig.tight_layout()
+    return fig
+
+def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
+    fig = _build_hit_rate_by_bucket_chart(report)
+    if not fig:
+        return ""
     return _fig_to_base64(fig)
 
-def _cluster_size_chart(report: TrafficReport) -> str:
+
+def _build_cluster_size_chart(report: TrafficReport) -> str:
     if not report.cluster_sizes:
         return ""
     top = report.cluster_sizes[:20]
@@ -138,9 +150,16 @@ def _cluster_size_chart(report: TrafficReport) -> str:
         f"top cluster = {report.top_cluster_share:.1%} of traffic)"
     )
     fig.tight_layout()
+    return fig
+
+def _cluster_size_chart(report: TrafficReport) -> str:
+    fig = _build_cluster_size_chart(report)
+    if not fig:
+        return ""
     return _fig_to_base64(fig)
 
-def _warmup_chart(report: TrafficReport) -> str:
+
+def _build_warmup_chart(report: TrafficReport) -> str:
     history = getattr(report, "warmup_history", [])
     if not history:
         return ""
@@ -153,6 +172,12 @@ def _warmup_chart(report: TrafficReport) -> str:
     ax.set_title("Cache warm-up curve")
     ax.grid(alpha=0.3)
     fig.tight_layout()
+    return fig
+
+def _warmup_chart(report: TrafficReport) -> str:
+    fig = _build_warmup_chart(report)
+    if not fig:
+        return ""
     return _fig_to_base64(fig)
 
 
@@ -235,3 +260,21 @@ def html_report(report: TrafficReport, path: str) -> None:
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
+
+def pdf_report(report: TrafficReport, path: str) -> None:
+    with PdfPages(path) as pdf:
+        # page 1: title + summary text
+        fig, ax = plt.subplots(figsize=(8.5, 11))
+        ax.axis("off")
+        ax.text(0.5, 0.95, "Navyra Traffic Profile", ha="center", fontsize=18, weight="bold")
+        ax.text(0.05, 0.85, report.summary(), fontsize=9, family="monospace", va="top")
+        pdf.savefig(fig)
+        plt.close(fig)
+
+        # one page per chart
+        for builder in (_build_waterfall_fig, _build_hit_rate_by_bucket_fig,
+                        _build_cluster_size_fig, _build_warmup_fig):
+            fig = builder(report)
+            if fig is not None:
+                pdf.savefig(fig)
+                plt.close(fig) 
