@@ -325,18 +325,30 @@ def html_report(report: TrafficReport, path: str) -> None:
         f.write("\n".join(parts))
 
 def pdf_report(report: TrafficReport, path: str) -> None:
+    """Render the same report content as a multi-page PDF."""
     with PdfPages(path) as pdf:
-        # page 1: title + summary text
+        # page 1: title, key wording rule, and full text summary
         fig, ax = plt.subplots(figsize=(8.5, 11))
         ax.axis("off")
-        ax.text(0.5, 0.95, "Navyra Traffic Profile", ha="center", fontsize=18, weight="bold")
-        ax.text(0.05, 0.85, report.summary(), fontsize=9, family="monospace", va="top")
-        pdf.savefig(fig)
+        ax.text(0.5, 0.97, "Navyra Traffic Profile", ha="center",
+                 fontsize=18, weight="bold")
+        ax.text(0.5, 0.94,
+                 f"{report.n_prompts:,} prompts analysed · match radius {report.radius}",
+                 ha="center", fontsize=9, color="#666")
+        ax.text(0.05, 0.88,
+                 "Note: T2 (same-bucket semantic) is an upper-bound proxy — up to this "
+                 "share of traffic is engine-addressable today. It is not a promised "
+                 "saving; the true hit rate is gated inside the model and measured in "
+                 "the free trial.",
+                 fontsize=8, color="#555", style="italic", va="top", wrap=True)
+        ax.text(0.05, 0.80, report.summary(), fontsize=9, family="monospace", va="top")
+        pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
 
+        # one page per chart, each with its caption included
         for builder in (_build_waterfall_chart, _build_hit_rate_by_bucket_chart,
                         _build_cluster_size_chart, _build_warmup_chart):
             fig = builder(report)
-            if fig is not None:         
-                pdf.savefig(fig)
+            if fig is not None:
+                pdf.savefig(fig, bbox_inches="tight")
                 plt.close(fig)
