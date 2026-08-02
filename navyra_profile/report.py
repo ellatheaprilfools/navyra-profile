@@ -104,7 +104,7 @@ def _build_waterfall_chart(report: TrafficReport) -> str:
 
 def _waterfall_chart(report: TrafficReport) -> str:
     fig = _build_waterfall_chart(report)
-    return _fig_to_base64(fig)
+    return _fig_to_base64(_build_waterfall_chart(report))
 
 def _build_hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     if not report.hit_rate_by_bucket:
@@ -132,7 +132,7 @@ def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     fig = _build_hit_rate_by_bucket_chart(report)
     if not fig:
         return ""
-    return _fig_to_base64(fig)
+    return _fig_to_base64(_build_hit_rate_by_bucket_chart(report))
 
 
 def _build_cluster_size_chart(report: TrafficReport) -> str:
@@ -156,7 +156,7 @@ def _cluster_size_chart(report: TrafficReport) -> str:
     fig = _build_cluster_size_chart(report)
     if not fig:
         return ""
-    return _fig_to_base64(fig)
+    return _fig_to_base64(_build_cluster_size_chart(report))
 
 
 def _build_warmup_chart(report: TrafficReport) -> str:
@@ -178,7 +178,7 @@ def _warmup_chart(report: TrafficReport) -> str:
     fig = _build_warmup_chart(report)
     if not fig:
         return ""
-    return _fig_to_base64(fig)
+    return _fig_to_base64(_build_warmup_chart(report))
 
 
 def _highlight_diff(a: str, b: str) -> tuple[str, str]:
@@ -271,10 +271,9 @@ def pdf_report(report: TrafficReport, path: str) -> None:
         pdf.savefig(fig)
         plt.close(fig)
 
-        # one page per chart
         for builder in (_build_waterfall_fig, _build_hit_rate_by_bucket_fig,
                         _build_cluster_size_fig, _build_warmup_fig):
             fig = builder(report)
             if fig is not None:
                 pdf.savefig(fig)
-                plt.close(fig) 
+                plt.close(fig)
