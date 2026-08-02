@@ -32,7 +32,6 @@ import difflib
 import html
 import io
 from datetime import datetime, timezone
-import difflib
 import html as html_module
  
 import matplotlib
@@ -68,63 +67,95 @@ def _fig_to_base64(fig) -> str:
     return encoded
 
 def _build_waterfall_chart(report: TrafficReport) -> str:
-    """Return a base64-encoded PNG of the waterfall chart."""
     t1 = report.exact_repeat_rate
-    sem_share = 1.0 - t1 
+    sem_share = 1.0 - t1
     t2 = report.would_hit_rate * sem_share
     t3 = report.cross_bucket_rate * sem_share
     remainder = max(0.0, 1.0 - t1 - t2 - t3)
 
-    
-    tier_labels = [
-    "T1 exact\nrepeats",
-    "T2 same-bucket\nsemantic",
-    "T3 cross-bucket\nsemantic",
-    "Remainder\n(unique)",
-    ]
-
-    values = [t1,t2,t3,remainder]
+    tier_labels = ["T1 exact\nrepeats", "T2 same-bucket\nsemantic",
+                   "T3 cross-bucket\nsemantic", "Remainder\n(unique)"]
+    values = [t1, t2, t3, remainder]
+    counts = [round(v * report.n_prompts) for v in values]
     colors = ["#4C9A2A", "#2E7DAF", "#D9A441", "#999999"]
 
-    
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    fig, ax = plt.subplots(figsize=(9, 5.5))
     running = 0.0
+    MIN_VISIBLE = 0.015  # bars below this fraction get a minimum drawn height
 
-    for i, (label, val) in enumerate(zip(tier_labels, values)):
-        ax.bar(label, val, bottom=running, color=colors[i], width=1.0)
-        ax.text(i, running + val / 2, f"{val:.1%}", ha="center", va="center",
-                 color="white", fontweight="bold")
-        running += val
+    for i, (label, val, n) in enumerate(zip(tier_labels, values, counts)):
+        draw_height = max(val, MIN_VISIBLE) if val > 0 else 0
+        ax.bar(label, draw_height, bottom=running, color=colors[i], width=1.0)
 
-    ax.set_ylim(0, 1)
+        label_y = running + draw_height / 2
+        text = f"{val:.1%}\n(n={n:,})" if val > 0 else "0.0%"
+        text_color = "white" if draw_height > 0.03 else colors[i]
+        va = "center" if draw_height > 0.03 else "bottom"
+        label_y = label_y if draw_height > 0.03 else running + draw_height + 0.01
+
+        ax.text(i, label_y, text, ha="center", va=va,
+                 color=text_color, fontweight="bold", fontsize=9)
+        running += val  # advance by the REAL value, not the padded draw_height
+
+    ax.set_ylim(0, 1.05)
     ax.set_ylabel("Share of total traffic")
-    ax.set_title("Tiered waterfall: where your traffic actually goes")
+    ax.set_title("Tiered waterfall: where your traffic actually goes", fontsize=13)
+    ax.text(0.5, 1.10, f"Based on {report.n_prompts:,} prompts · match radius {report.radius}",
+             transform=ax.transAxes, ha="center", fontsize=9, color="#666")
+
+    legend_text = (
+        "T1 — identical prompts, already served free by prefix caching.\n"
+        "T2 — different wording, same meaning, same length range: today's addressable "
+        "opportunity (upper-bound estimate, not a guaranteed saving).\n"
+        "T3 — same meaning, different length range: not addressable yet.\n"
+        "Remainder — traffic with no detected repetition."
+    )
+    fig.text(0.02, -0.02, legend_text, fontsize=8, color="#444", va="top", wrap=True)
+
     fig.tight_layout()
-    return fig 
+    return fig
+
 
 def _waterfall_chart(report: TrafficReport) -> str:
     fig = _build_waterfall_chart(report)
-    return _fig_to_base64(_build_waterfall_chart(report))
+    if fig is None:
+        return ""
+    return _fig_to_base64(fig)
 
 def _build_hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     if not report.hit_rate_by_bucket:
-        return ""
+        return None
 
     buckets = sorted(report.hit_rate_by_bucket)
     rates = [report.hit_rate_by_bucket[b][0] for b in buckets]
     counts = [report.hit_rate_by_bucket[b][1] for b in buckets]
 
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(9, 5))
     bars = ax.bar([str(b) for b in buckets], rates, color="#2E7DAF")
 
-    for bar, n in zip(bars, counts):
+    for bar, rate, n in zip(bars, rates, counts):
+        label = f"{rate:.1%}\n(n={n:,})"
+        # low-sample-size warning: a rate from very few prompts is noisy
+        if n < 30:
+            label += "\n⚠ small sample"
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                 f"n={n}", ha="center", va="bottom", fontsize=8)
+                 label, ha="center", va="bottom", fontsize=8)
 
-    ax.set_ylim(0, max(rates + [0.1]) * 1.25)
+    from matplotlib.ticker import PercentFormatter
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    ax.set_ylim(0, max(rates + [0.1]) * 1.35)
     ax.set_xlabel("Prompt length bucket (tokens)")
     ax.set_ylabel("Same-bucket hit rate")
-    ax.set_title("Hit rate by length bucket")
+    ax.set_title("Hit rate by length bucket", fontsize=13)
+    ax.grid(axis="y", alpha=0.3)
+
+    caption = (
+        "Each bar shows what share of prompts in that length range found a "
+        "semantic match (T2) elsewhere in the same range. 'n' is the number of "
+        "prompts that length range actually contains — small n means the rate "
+        "is based on limited data and may not generalise."
+    )
+    fig.text(0.02, -0.05, caption, fontsize=8, color="#444", va="top", wrap=True)
     fig.tight_layout()
     return fig
 
@@ -137,48 +168,80 @@ def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
 
 def _build_cluster_size_chart(report: TrafficReport) -> str:
     if not report.cluster_sizes:
-        return ""
+        return None
     top = report.cluster_sizes[:20]
+    shown_total = sum(top)
+    all_total = sum(report.cluster_sizes)
+    shown_share = shown_total / max(1, all_total)
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(range(1, len(top) + 1), top, color="#6C5B7B")
+    fig, ax = plt.subplots(figsize=(9, 5))
+    bars = ax.bar(range(1, len(top) + 1), top, color="#6C5B7B")
+    ax.bar(1, top[0], color="#4A3F57")  # top cluster gets a distinct shade
+
+    ax.text(1, top[0], f"largest:\n{top[0]:,} prompts", ha="center", va="bottom",
+             fontsize=8, fontweight="bold")
+
     ax.set_xlabel("Cluster rank (largest first)")
     ax.set_ylabel("Prompts in cluster")
     ax.set_title(
-        f"Cluster size distribution "
-        f"({report.n_clusters:,} clusters total, "
-        f"top cluster = {report.top_cluster_share:.1%} of traffic)"
+        f"Cluster size distribution — top 20 of {report.n_clusters:,} clusters total",
+        fontsize=13)
+    ax.grid(axis="y", alpha=0.3)
+
+    caption = (
+        f"A cluster is a group of prompts that all matched each other semantically. "
+        f"The 20 largest clusters shown here account for {shown_share:.1%} of all "
+        f"traffic that formed any cluster ({shown_total:,} of {all_total:,} prompts). "
+        f"The single largest cluster alone is {report.top_cluster_share:.1%} of your "
+        f"total traffic."
     )
+    fig.text(0.02, -0.06, caption, fontsize=8, color="#444", va="top", wrap=True)
     fig.tight_layout()
     return fig
 
 def _cluster_size_chart(report: TrafficReport) -> str:
     fig = _build_cluster_size_chart(report)
-    if not fig:
+    if fig is None:
         return ""
-    return _fig_to_base64(_build_cluster_size_chart(report))
+    return _fig_to_base64(fig)
 
 
 def _build_warmup_chart(report: TrafficReport) -> str:
     history = getattr(report, "warmup_history", [])
     if not history:
-        return ""
+        return None
     xs, ys = zip(*history)
+    final_rate = report.would_hit_rate
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(xs, [y * 100 for y in ys], color="#2E7DAF", linewidth=2)
-    ax.set_xlabel("Prompts processed")
-    ax.set_ylabel("Cumulative T2 hit rate (%)")
-    ax.set_title("Cache warm-up curve")
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(xs, [y * 100 for y in ys], color="#2E7DAF", linewidth=2, label="observed rate")
+    ax.axhline(final_rate * 100, color="#999", linestyle="--", linewidth=1,
+                label=f"final rate ({final_rate:.1%})")
+
+    from matplotlib.ticker import PercentFormatter
+    ax.yaxis.set_major_formatter(PercentFormatter())
+    ax.set_xlabel("Prompts processed (in original order)")
+    ax.set_ylabel("Cumulative T2 hit rate")
+    ax.set_title("Cache warm-up curve", fontsize=13)
     ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, loc="lower right")
+
+    caption = (
+        "This shows how the semantic hit rate changes as traffic streams in, "
+        "simulating a cache starting empty. The rate is low early on (nothing to "
+        "match against yet) and rises as more prompts accumulate in the bank. "
+        "The dashed line marks the final overall rate for reference."
+    )
+    fig.text(0.02, -0.05, caption, fontsize=8, color="#444", va="top", wrap=True)
     fig.tight_layout()
     return fig
 
+
 def _warmup_chart(report: TrafficReport) -> str:
     fig = _build_warmup_chart(report)
-    if not fig:
+    if fig is None:
         return ""
-    return _fig_to_base64(_build_warmup_chart(report))
+    return _fig_to_base64(fig)
 
 
 def _highlight_diff(a: str, b: str) -> tuple[str, str]:
@@ -274,6 +337,6 @@ def pdf_report(report: TrafficReport, path: str) -> None:
         for builder in (_build_waterfall_chart, _build_hit_rate_by_bucket_chart,
                         _build_cluster_size_chart, _build_warmup_chart):
             fig = builder(report)
-            if fig is not None:
+            if fig is not None:         
                 pdf.savefig(fig)
                 plt.close(fig)
