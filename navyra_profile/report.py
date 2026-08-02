@@ -271,8 +271,8 @@ def pdf_report(report: TrafficReport, path: str) -> None:
         pdf.savefig(fig)
         plt.close(fig)
 
-        for builder in (_build_waterfall_fig, _build_hit_rate_by_bucket_fig,
-                        _build_cluster_size_fig, _build_warmup_fig):
+        for builder in (_build_waterfall_chart, _build_hit_rate_by_bucket_chart,
+                        _build_cluster_size_chart, _build_warmup_chart):
             fig = builder(report)
             if fig is not None:
                 pdf.savefig(fig)
