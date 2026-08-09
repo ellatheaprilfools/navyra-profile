@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass, field
  
 from faker import Faker
+from collections import defaultdict
+
  
  
 @dataclass
@@ -178,6 +180,7 @@ _TIER_MIX = {
 }
  
  
+ 
 def make_traffic(n: int = 10_000,
                   template_share: float = 0.4,
                   n_templates: int = 25,
@@ -191,15 +194,12 @@ def make_traffic(n: int = 10_000,
     bank_templates = [t for t, w in bank]
     bank_weights = [w for t, w in bank]
  
-    prompts: list[str] = []
-    tiers: list[str] = []
- 
-    # bases: list of (template, filled_prompt) already emitted, available
-    # for T1/T2/T3/T4 to be built from
-    bases: list[tuple[str, str]] = []
- 
     n_templated = round(n * template_share)
     n_unique = n - n_templated
+ 
+
+    items = []
+    bases = []  # (template, filled_text, item_index)
  
     roles = list(_TIER_MIX)
     role_weights = list(_TIER_MIX.values())
@@ -210,31 +210,48 @@ def make_traffic(n: int = 10_000,
         if role == "new" or not bases:
             template = rng.choices(bank_templates, weights=bank_weights, k=1)[0]
             filled = _fill_template(template, fake)
-            bases.append((template, filled))
-            prompts.append(filled)
-            tiers.append("unique")  # first occurrence: nothing to repeat yet
+            idx = len(items)
+            items.append({"text": filled, "tier": "unique", "depends_on": None})
+            bases.append((template, filled, idx))
             continue
  
-        template, base_prompt = rng.choice(bases)
- 
+        template, base_prompt, base_idx = rng.choice(bases)
         if role == "T1":
-            prompts.append(base_prompt)
+            text = base_prompt
         elif role == "T2":
-            prompts.append(_paraphrase(base_prompt, paraphrase_strength, rng))
+            text = _paraphrase(base_prompt, paraphrase_strength, rng)
         elif role == "T3":
-            prompts.append(_paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng))
+            text = _paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng)
         elif role == "T4":
-            prompts.append(_near_duplicate(template, base_prompt, fake))
-        tiers.append(role)
+            text = _near_duplicate(template, base_prompt, fake)
+        items.append({"text": text, "tier": role, "depends_on": base_idx})
  
     for _ in range(n_unique):
-        prompts.append(_unique_prompt(fake))
-        tiers.append("unique")
+        items.append({"text": _unique_prompt(fake), "tier": "unique", "depends_on": None})
  
-    # shuffle together so templated/unique traffic is interleaved, like a
-    # real stream, rather than all templated prompts arriving first
-    combined = list(zip(prompts, tiers))
-    rng.shuffle(combined)
-    prompts, tiers = zip(*combined) if combined else ([], [])
+    # base prompts must come before their derived copies, so we do a topological
+    # sort of the dependency graph. Randomize the order of items with no
+    # dependencies to avoid biasing the order of the templated prompts.
+
+    children = defaultdict(list)
+    indegree = [0] * len(items)
+    for i, it in enumerate(items):
+        if it["depends_on"] is not None:
+            children[it["depends_on"]].append(i)
+            indegree[i] = 1
  
-    return SynthResult(prompts=list(prompts), tiers=list(tiers))
+    ready = [i for i in range(len(items)) if indegree[i] == 0]
+    rng.shuffle(ready)
+    order = []
+    while ready:
+        i = ready.pop(rng.randrange(len(ready)))
+        order.append(i)
+        for c in children[i]:
+            indegree[c] -= 1
+            if indegree[c] == 0:
+                ready.insert(rng.randrange(len(ready) + 1), c)
+ 
+    prompts = [items[i]["text"] for i in order]
+    tiers = [items[i]["tier"] for i in order]
+ 
+    return SynthResult(prompts=prompts, tiers=tiers)
