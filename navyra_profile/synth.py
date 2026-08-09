@@ -23,6 +23,7 @@ then state the profiler's per-tier accuracy quantitatively.
 """
 
 
+
 from __future__ import annotations
  
 import random
@@ -30,8 +31,6 @@ import re
 from dataclasses import dataclass, field
  
 from faker import Faker
-from collections import defaultdict
-
  
  
 @dataclass
@@ -80,17 +79,17 @@ def _fill_template(template: str, fake: Faker) -> str:
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
  
- 
 
 _SYNONYM_SWAPS = {
-    "status": ["state", "progress"],
-    "summarize": ["summarise", "give an overview of"],
-    "weather": ["forecast", "conditions"],
-    "confirm": ["verify", "double-check"],
-    "contact": ["reach", "get in touch with"],
+    "status": ["state", "progress", "current state", "standing", "condition"],
+    "summarize": ["summarise", "give an overview of", "recap", "outline", "break down"],
+    "weather": ["forecast", "conditions", "climate", "outlook"],
+    "confirm": ["verify", "double-check", "validate", "check", "make sure of"],
+    "contact": ["reach", "get in touch with", "connect with", "speak to", "reach out to"],
 }
  
-_LENGTHENERS = ["Just to clarify,", "If you don't mind,", "Sorry to ask, but", "I was wondering,", "Before I forget,"]
+_LENGTHENERS = ["Just to clarify,", "If you don't mind,", "Quickly —",
+                "Sorry to ask, but", "I was wondering,", "Before I forget,"]
  
  
 def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bool]:
@@ -126,24 +125,15 @@ def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
  
 def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
                               bucket_size: int = 8) -> str:
+    """Cross-bucket paraphrase (T3): reword AND guarantee the token count
+    crosses into a different length bucket than the original.
+    """
     reworded, _ = _swap_words(text, strength, rng)
     current_len = len(reworded.split())
     current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
     words_needed = (current_bucket - current_len) + 1
-
-    # pick fillers one at a time, without repeats, until we've added enough words 
-
-    available = _LENGTHENERS.copy()
-    rng.shuffle(available)
-    chosen = []
-    words_so_far = 0
-    for phrase in available:
-        if words_so_far >= words_needed:
-            break
-        chosen.append(phrase)
-        words_so_far += len(phrase.split())
-
-    filler = " ".join(chosen)
+ 
+    filler = " ".join(rng.choices(_LENGTHENERS, k=max(1, words_needed // 2)))
     return filler + " " + reworded
  
  
@@ -163,13 +153,9 @@ def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
  
- 
 
- 
 def _unique_prompt(fake: Faker) -> str:
     return fake.sentence(nb_words=8)
- 
-
  
 _TIER_MIX = {
     "new": 0.40,    # a fresh, never-seen-before filled template
@@ -179,6 +165,8 @@ _TIER_MIX = {
     "T4": 0.10,     # near-duplicate (one slot changed) of an earlier templated prompt
 }
  
+ 
+from collections import defaultdict
  
  
 def make_traffic(n: int = 10_000,
@@ -197,9 +185,14 @@ def make_traffic(n: int = 10_000,
     n_templated = round(n * template_share)
     n_unique = n - n_templated
  
-
+    # Each item records its true tier and (if any) the index of the base
+    # it must come AFTER. This lets us shuffle safely afterward — a full
+    # unconstrained shuffle can place a derived copy BEFORE its own base,
+    # which corrupts which one the analyzer's exact-match detection treats
+    # as "the original" (order-dependent by design).
     items = []
     bases = []  # (template, filled_text, item_index)
+    used_variants = defaultdict(set)  # base_idx -> set of T2/T3 texts already produced for it
  
     roles = list(_TIER_MIX)
     role_weights = list(_TIER_MIX.values())
@@ -220,8 +213,21 @@ def make_traffic(n: int = 10_000,
             text = base_prompt
         elif role == "T2":
             text = _paraphrase(base_prompt, paraphrase_strength, rng)
+            # guard against repeated paraphrases of a popular base coinciding
+            # with each other by chance (small synonym pools) — retry with
+            # fresh randomness a few times before giving up
+            attempts = 0
+            while text in used_variants[base_idx] and attempts < 5:
+                text = _paraphrase(base_prompt, paraphrase_strength, rng)
+                attempts += 1
+            used_variants[base_idx].add(text)
         elif role == "T3":
             text = _paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng)
+            attempts = 0
+            while text in used_variants[base_idx] and attempts < 5:
+                text = _paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng)
+                attempts += 1
+            used_variants[base_idx].add(text)
         elif role == "T4":
             text = _near_duplicate(template, base_prompt, fake)
         items.append({"text": text, "tier": role, "depends_on": base_idx})
