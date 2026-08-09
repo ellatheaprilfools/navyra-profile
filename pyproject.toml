@@ -14,6 +14,7 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 full = ["sentence-transformers>=2.2", "matplotlib>=3.7"]
+dev = ["faker>=20.0"]
 
 [project.scripts]
 navyra-profile = "navyra_profile.cli:main"
