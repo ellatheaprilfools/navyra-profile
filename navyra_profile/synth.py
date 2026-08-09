@@ -48,7 +48,7 @@ _FAKER_SLOTS = {
     "topic": lambda fake: fake.bs(),
 }
  
-# template, weight
+# template, weight to simulate real data 
 _BASE_TEMPLATES = [
     ("What's the status of order {order_id}?", 5),
     ("Can you summarize {topic} for me?", 3),
@@ -82,57 +82,84 @@ def _fill_template(template: str, fake: Faker) -> str:
 
 _SYNONYM_SWAPS = {
     "status": ["state", "progress"],
-    "summarise": ["sum up", "give an overview of"],
+    "summarize": ["summarise", "give an overview of"],
     "weather": ["forecast", "conditions"],
-    "confirm": ["verify", "approve"],
+    "confirm": ["verify", "double-check"],
     "contact": ["reach", "get in touch with"],
 }
  
-_LENGTHENERS = ["Just to clarify, ", "If you don't mind, ", "Quickly — ", "Sorry to ask, but "]
+_LENGTHENERS = ["Just to clarify,", "If you don't mind,", "Sorry to ask, but", "I was wondering,", "Before I forget,"]
+ 
+ 
+def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bool]:
+    """Attempt synonym swaps on eligible words. Returns (result, changed) —
+    changed is False if nothing in the text was swappable at all.
+    """
+    words = text.split()
+    swappable_indices = [i for i, w in enumerate(words)
+                          if w.lower().strip("?.,'") in _SYNONYM_SWAPS]
+    if not swappable_indices:
+        return text, False
+ 
+    forced = rng.choice(swappable_indices)  # guarantee at least one real swap
+    for i in swappable_indices:
+        if i == forced or rng.random() < strength:
+            key = words[i].lower().strip("?.,'")
+            words[i] = rng.choice(_SYNONYM_SWAPS[key])
+    return " ".join(words), True
  
  
 def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
-    """Same-length-bucket paraphrase: swap eligible words, leave length
-    roughly unchanged. Used for T2.
+    """Same-bucket paraphrase (T2): reword via synonym swap. If nothing is
+    swappable, fall back to a minimal guaranteed change that shouldn't
+    push the token count into a different bucket.
     """
-    words = text.split()
-    for i, w in enumerate(words):
-        key = w.lower().strip("?.,'")
-        if key in _SYNONYM_SWAPS and rng.random() < strength:
-            words[i] = rng.choice(_SYNONYM_SWAPS[key])
-    return " ".join(words)
+    result, changed = _swap_words(text, strength, rng)
+    if changed:
+        return result
+    if text.rstrip().endswith("?"):
+        return text.rstrip()[:-1] + ", please?"
+    return text + " please."
  
  
-def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random) -> str:
-    """Cross-bucket paraphrase: same idea as _paraphrase, but also prepends
-    filler words to push the token count into a different length bucket.
-    Used for T3.
+def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
+                              bucket_size: int = 8) -> str:
+    """Cross-bucket paraphrase (T3): reword AND guarantee the token count
+    crosses into a different length bucket than the original.
     """
-    reworded = _paraphrase(text, strength, rng)
-    return rng.choice(_LENGTHENERS) + reworded
+    reworded, _ = _swap_words(text, strength, rng)
+    current_len = len(reworded.split())
+    current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
+    words_needed = (current_bucket - current_len) + 1
+ 
+    filler = " ".join(rng.choices(_LENGTHENERS, k=max(1, words_needed // 2)))
+    return filler + " " + reworded
  
  
 def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
-    """Re-fill ONE slot with a fresh value, keep everything else identical
-    to base_prompt. Used for T4 — this is what makes it dangerous for
-    whole-answer caching: nearly identical text, one critical detail changed.
+    """Re-fill the template's slot(s) with fresh values. Used for T4 — this
+    is what makes it dangerous for whole-answer caching: nearly identical
+    text, one or more critical details changed.
+ 
+    LIMITATION: for templates with more than one placeholder, this refills
+    ALL of them, not just one — so "differs by exactly one detail" only
+    strictly holds for the current single/low-slot templates. Worth fixing
+    to change only one placeholder if multi-slot templates get added later.
     """
     placeholders = re.findall(r"\{(\w+)\}", template)
     if not placeholders:
         return base_prompt
-    # refill just the first placeholder found; leave the template's other
-    # slots as they already appear in base_prompt by reconstructing from
-    # the template with one new value and the rest re-filled fresh is
-    # simplest and still guarantees "differs by ~one detail" in practice
-    # for these single/low-slot templates.
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
  
+ 
+
  
 def _unique_prompt(fake: Faker) -> str:
     return fake.sentence(nb_words=8)
  
 
+ 
 _TIER_MIX = {
     "new": 0.40,    # a fresh, never-seen-before filled template
     "T1": 0.15,     # exact repeat of an earlier templated prompt
