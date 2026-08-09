@@ -124,15 +124,24 @@ def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
  
 def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
                               bucket_size: int = 8) -> str:
-    """Cross-bucket paraphrase (T3): reword AND guarantee the token count
-    crosses into a different length bucket than the original.
-    """
     reworded, _ = _swap_words(text, strength, rng)
     current_len = len(reworded.split())
     current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
     words_needed = (current_bucket - current_len) + 1
- 
-    filler = " ".join(rng.choices(_LENGTHENERS, k=max(1, words_needed // 2)))
+
+    # pick fillers one at a time, without repeats, until we've added enough words 
+
+    available = _LENGTHENERS.copy()
+    rng.shuffle(available)
+    chosen = []
+    words_so_far = 0
+    for phrase in available:
+        if words_so_far >= words_needed:
+            break
+        chosen.append(phrase)
+        words_so_far += len(phrase.split())
+
+    filler = " ".join(chosen)
     return filler + " " + reworded
  
  
