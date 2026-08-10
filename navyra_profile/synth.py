@@ -29,16 +29,25 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass, field
- 
+import numpy as np
+
 from faker import Faker
+from collections import defaultdict
+
+from .analyser import _bucket
+from .fingerprint import Fingerprinter, hamming
+ 
+# keeps synthetic ground-truth validation aligned with analyse()’s default radius.
+_VALIDATION_RADIUS = 6
  
  
 @dataclass
 class SynthResult:
     prompts: list[str] = field(default_factory=list)
-    tiers: list[str] = field(default_factory=list)  # "T1"/"T2"/"T3"/"T4"/"unique", parallel to prompts
+    tiers: list[str] = field(default_factory=list)
     base_of: list[int | None] = field(default_factory=list)
-
+    t3_validation: dict = field(default_factory=dict)  # {"passed": N, "fallback": N}
+ 
  
 _FAKER_SLOTS = {
     "order_id": lambda fake: str(fake.random_int(min=1000, max=99999)),
@@ -49,7 +58,6 @@ _FAKER_SLOTS = {
     "topic": lambda fake: fake.bs(),
 }
  
-# template, weight to simulate real data 
 _BASE_TEMPLATES = [
     ("What's the status of order {order_id}?", 5),
     ("Can you summarize {topic} for me?", 3),
@@ -60,10 +68,6 @@ _BASE_TEMPLATES = [
  
  
 def _build_template_bank(n_templates: int) -> list[tuple[str, int]]:
-    """Expand _BASE_TEMPLATES up to n_templates entries by cycling through
-    them with decaying weight, if more templates are requested than the
-    hand-written bank has.
-    """
     bank = list(_BASE_TEMPLATES)
     i = 0
     while len(bank) < n_templates:
@@ -79,7 +83,7 @@ def _fill_template(template: str, fake: Faker) -> str:
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
  
-
+ 
 _SYNONYM_SWAPS = {
     "status": ["state", "progress", "current state", "standing", "condition"],
     "summarize": ["summarise", "give an overview of", "recap", "outline", "break down"],
@@ -93,16 +97,12 @@ _LENGTHENERS = ["Just to clarify,", "If you don't mind,", "Quickly —",
  
  
 def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bool]:
-    """Attempt synonym swaps on eligible words. Returns (result, changed) —
-    changed is False if nothing in the text was swappable at all.
-    """
     words = text.split()
     swappable_indices = [i for i, w in enumerate(words)
                           if w.lower().strip("?.,'") in _SYNONYM_SWAPS]
     if not swappable_indices:
         return text, False
- 
-    forced = rng.choice(swappable_indices)  # guarantee at least one real swap
+    forced = rng.choice(swappable_indices)
     for i in swappable_indices:
         if i == forced or rng.random() < strength:
             key = words[i].lower().strip("?.,'")
@@ -111,10 +111,6 @@ def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bo
  
  
 def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
-    """Same-bucket paraphrase (T2): reword via synonym swap. If nothing is
-    swappable, fall back to a minimal guaranteed change that shouldn't
-    push the token count into a different bucket.
-    """
     result, changed = _swap_words(text, strength, rng)
     if changed:
         return result
@@ -125,48 +121,122 @@ def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
  
 def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
                               bucket_size: int = 8) -> str:
-    """Cross-bucket paraphrase (T3): reword AND guarantee the token count
-    crosses into a different length bucket than the original.
-    """
     reworded, _ = _swap_words(text, strength, rng)
     current_len = len(reworded.split())
     current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
     words_needed = (current_bucket - current_len) + 1
- 
     filler = " ".join(rng.choices(_LENGTHENERS, k=max(1, words_needed // 2)))
     return filler + " " + reworded
  
  
-def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
-    """Re-fill the template's slot(s) with fresh values. Used for T4 — this
-    is what makes it dangerous for whole-answer caching: nearly identical
-    text, one or more critical details changed.
+_REMOVABLE_SCAFFOLDING = [
+    "Quick one —", "Quick one -", "Just to clarify,", "If you don't mind,",
+    "Sorry to ask, but", "I was wondering,", "Before I forget,",
+    "can you", "could you", "for me", "please", "today",
+]
  
-    LIMITATION: for templates with more than one placeholder, this refills
-    ALL of them, not just one — so "differs by exactly one detail" only
-    strictly holds for the current single/low-slot templates. Worth fixing
-    to change only one placeholder if multi-slot templates get added later.
+ 
+def _paraphrase_cross_bucket_shorter(text: str, strength: float,
+                                      rng: random.Random,
+                                      bucket_size: int = 8) -> str | None:
+    """Cross-bucket paraphrase by REMOVING low-content scaffolding rather
+    than adding filler.
+ 
+    Rationale: adding words introduces new concepts the embedding model
+    must represent, which measurably pushes the fingerprint away from the
+    base (confirmed empirically — both generic filler and topical
+    elaboration degraded semantic closeness). Removing near-contentless
+    scaffolding ("Quick one —", "can you", "for me") should shift meaning
+    far less, since the model likely already discounts these.
+ 
+    Returns None if the text can't be shortened enough to cross a bucket
+    boundary — the caller should then fall back to lengthening.
     """
+    reworded, _ = _swap_words(text, strength, rng)
+    original_bucket = _bucket(len(reworded.split()), bucket_size)
+ 
+    candidates = _REMOVABLE_SCAFFOLDING.copy()
+    rng.shuffle(candidates)
+ 
+    stripped = reworded
+    for phrase in candidates:
+        if phrase.lower() in stripped.lower():
+            # remove the first occurrence, case-insensitively
+            idx = stripped.lower().index(phrase.lower())
+            stripped = (stripped[:idx] + stripped[idx + len(phrase):])
+            stripped = " ".join(stripped.split())  # tidy whitespace
+            if _bucket(len(stripped.split()), bucket_size) != original_bucket:
+                # capitalise properly if we removed a leading phrase
+                if stripped and stripped[0].islower():
+                    stripped = stripped[0].upper() + stripped[1:]
+                return stripped
+ 
+    return None  # couldn't cross a boundary by shortening alone
+ 
+ 
+def _make_validated_t3(base_prompt: str, base_fp, strength: float,
+                        rng: random.Random, fp: Fingerprinter,
+                        used: set, bucket_size: int = 8,
+                        max_attempts: int = 8):
+
+    base_bucket = _bucket(len(base_prompt.split()), bucket_size)
+    best_candidate = None
+    best_distance = None
+    strategy_used = None
+ 
+    for attempt in range(max_attempts):
+        # Try shortening first (removing low-content scaffolding) before
+        # falling back to LENGTHENING (adding filler).
+        candidate = None
+        this_strategy = None
+        if attempt < max_attempts // 2:
+            candidate = _paraphrase_cross_bucket_shorter(
+                base_prompt, strength, rng, bucket_size)
+            this_strategy = "shorter"
+        if candidate is None:
+            candidate = _paraphrase_cross_bucket(
+                base_prompt, strength, rng, bucket_size)
+            this_strategy = "longer"
+ 
+        if candidate in used:
+            continue
+        if _bucket(len(candidate.split()), bucket_size) == base_bucket:
+            continue  # didn't actually cross buckets, doesn't count
+ 
+        cand_fp = fp.fingerprints([candidate])[0]
+        d = int(hamming(np.array([cand_fp]), np.uint64(base_fp))[0])
+ 
+        if best_distance is None or d < best_distance:
+            best_candidate, best_distance = candidate, d
+            strategy_used = this_strategy
+ 
+        if d <= _VALIDATION_RADIUS:
+            return candidate, True, this_strategy
+ 
+    # nothing passed within max_attempts — return the closest attempt,
+    # flagged as not validated
+    return (best_candidate or base_prompt), False, strategy_used
+ 
+ 
+def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
     placeholders = re.findall(r"\{(\w+)\}", template)
     if not placeholders:
         return base_prompt
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
  
-
+ 
 def _unique_prompt(fake: Faker) -> str:
     return fake.sentence(nb_words=8)
  
+ 
 _TIER_MIX = {
-    "new": 0.40,    # a fresh, never-seen-before filled template
-    "T1": 0.15,     # exact repeat of an earlier templated prompt
-    "T2": 0.20,     # same-bucket paraphrase of an earlier templated prompt
-    "T3": 0.15,     # cross-bucket paraphrase of an earlier templated prompt
-    "T4": 0.10,     # near-duplicate (one slot changed) of an earlier templated prompt
+    "new": 0.40,
+    "T1": 0.15,
+    "T2": 0.20,
+    "T3": 0.15,
+    "T4": 0.10,
 }
- 
- 
-from collections import defaultdict
  
  
 def make_traffic(n: int = 10_000,
@@ -185,14 +255,12 @@ def make_traffic(n: int = 10_000,
     n_templated = round(n * template_share)
     n_unique = n - n_templated
  
-    # Each item records its true tier and (if any) the index of the base
-    # it must come AFTER. This lets us shuffle safely afterward — a full
-    # unconstrained shuffle can place a derived copy BEFORE its own base,
-    # which corrupts which one the analyzer's exact-match detection treats
-    # as "the original" (order-dependent by design).
     items = []
-    bases = []  # (template, filled_text, item_index)
-    used_variants = defaultdict(set)  # base_idx -> set of T2/T3 texts already produced for it
+    bases = []  # (template, filled_text, item_index, fingerprint)
+    used_variants = defaultdict(set)
+    t3_validation_stats = {"passed": 0, "fallback": 0}
+ 
+    fp = Fingerprinter()  # created once — reused for every base and T3 candidate
  
     roles = list(_TIER_MIX)
     role_weights = list(_TIER_MIX.values())
@@ -205,29 +273,34 @@ def make_traffic(n: int = 10_000,
             filled = _fill_template(template, fake)
             idx = len(items)
             items.append({"text": filled, "tier": "unique", "depends_on": None})
-            bases.append((template, filled, idx))
+            base_fp = fp.fingerprints([filled])[0]
+            bases.append((template, filled, idx, base_fp))
             continue
  
-        template, base_prompt, base_idx = rng.choice(bases)
+        template, base_prompt, base_idx, base_fp = rng.choice(bases)
         if role == "T1":
             text = base_prompt
         elif role == "T2":
             text = _paraphrase(base_prompt, paraphrase_strength, rng)
-            # guard against repeated paraphrases of a popular base coinciding
-            # with each other by chance (small synonym pools) — retry with
-            # fresh randomness a few times before giving up
             attempts = 0
             while text in used_variants[base_idx] and attempts < 5:
                 text = _paraphrase(base_prompt, paraphrase_strength, rng)
                 attempts += 1
             used_variants[base_idx].add(text)
         elif role == "T3":
-            text = _paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng)
-            attempts = 0
-            while text in used_variants[base_idx] and attempts < 5:
-                text = _paraphrase_cross_bucket(base_prompt, paraphrase_strength, rng)
-                attempts += 1
+            text, passed, strategy = _make_validated_t3(
+                base_prompt, base_fp, paraphrase_strength, rng, fp,
+                used_variants[base_idx])
             used_variants[base_idx].add(text)
+            if passed:
+                t3_validation_stats["passed"] += 1
+                t3_validation_stats[f"passed_via_{strategy}"] = (
+                    t3_validation_stats.get(f"passed_via_{strategy}", 0) + 1)
+            else:
+                # didn't pass real semantic validation — don't claim T3;
+                # fall back to T2 (same-bucket) for the tier label, but still
+                t3_validation_stats["fallback"] += 1
+                role = "unique"  #
         elif role == "T4":
             text = _near_duplicate(template, base_prompt, fake)
         items.append({"text": text, "tier": role, "depends_on": base_idx})
@@ -235,10 +308,6 @@ def make_traffic(n: int = 10_000,
     for _ in range(n_unique):
         items.append({"text": _unique_prompt(fake), "tier": "unique", "depends_on": None})
  
-    # base prompts must come before their derived copies, so we do a topological
-    # sort of the dependency graph. Randomize the order of items with no
-    # dependencies to avoid biasing the order of the templated prompts.
-
     children = defaultdict(list)
     indegree = [0] * len(items)
     for i, it in enumerate(items):
@@ -259,7 +328,7 @@ def make_traffic(n: int = 10_000,
  
     prompts = [items[i]["text"] for i in order]
     tiers = [items[i]["tier"] for i in order]
-
+ 
     position_of_original_index = {orig_i: pos for pos, orig_i in enumerate(order)}
     base_of = [
         position_of_original_index[items[i]["depends_on"]]
@@ -267,5 +336,6 @@ def make_traffic(n: int = 10_000,
         for i in order
     ]
  
-    return SynthResult(prompts=prompts, tiers=tiers, base_of=base_of)
+    return SynthResult(prompts=prompts, tiers=tiers, base_of=base_of,
+                        t3_validation=t3_validation_stats)
  
