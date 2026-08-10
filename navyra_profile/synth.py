@@ -166,12 +166,22 @@ def _make_validated_t3(base_prompt: str, base_fp, strength: float,
                         rng: random.Random, fp: Fingerprinter,
                         used: set, strategy_stats: dict,
                         bucket_size: int = 8, max_attempts: int = 8):
-
+    """Generate a T3 candidate and VALIDATE it directly against the real
+    Fingerprinter — the same mechanism analyse() itself uses — rather
+    than assuming any particular construction method preserves meaning.
+    Retries with fresh randomness until a candidate both crosses into a
+    different length bucket AND stays within the analyzer's own match
+    radius of its base. Falls back to the closest attempt if none pass
+    within max_attempts (rare, but text-generation constraints mean a
+    perfect candidate isn't always guaranteed on the first few tries).
+ 
+    Returns (text, passed_validation: bool).
+    """
     base_bucket = _bucket(len(base_prompt.split()), bucket_size)
     best_candidate = None
     best_distance = None
     strategy_used = None
-
+ 
     def _try(candidate, strategy_name):
         nonlocal best_candidate, best_distance
         if candidate is None or candidate in used:
@@ -187,22 +197,21 @@ def _make_validated_t3(base_prompt: str, base_fp, strength: float,
             strategy_stats[strategy_name]["valid"] += 1
             return candidate
         return None
-
+ 
     for _ in range(max_attempts):
-
         short_candidate = _paraphrase_cross_bucket_shorter(
             base_prompt, strength, rng, bucket_size)
         long_candidate = _paraphrase_cross_bucket(
             base_prompt, strength, rng, bucket_size)
-
-        short_pass = _try(short_candidate, "shorter")
-        if short_pass:
-            return short_pass, True, "shorter"
-
+ 
         long_pass = _try(long_candidate, "longer")
         if long_pass:
             return long_pass, True, "longer"
-
+ 
+        short_pass = _try(short_candidate, "shorter")
+        if short_pass:
+            return short_pass, True, "shorter"
+ 
     return (best_candidate or base_prompt), False, strategy_used
 
 
@@ -235,14 +244,14 @@ def make_traffic(n: int = 10_000,
     rng = random.Random(seed)
     fake = Faker()
     fake.seed_instance(seed)
-
+ 
     bank = _build_template_bank(n_templates)
     bank_templates = [t for t, w in bank]
     bank_weights = [w for t, w in bank]
-
+ 
     n_templated = round(n * template_share)
     n_unique = n - n_templated
-
+ 
     items = []
     bases = []  # (template, filled_text, item_index, fingerprint)
     used_variants = defaultdict(set)
@@ -251,15 +260,15 @@ def make_traffic(n: int = 10_000,
         "shorter": {"attempted": 0, "valid": 0},
         "longer": {"attempted": 0, "valid": 0},
     }
-
+ 
     fp = Fingerprinter()  # created once — reused for every base and T3 candidate
-
+ 
     roles = list(_TIER_MIX)
     role_weights = list(_TIER_MIX.values())
-
+ 
     for _ in range(n_templated):
         role = rng.choices(roles, weights=role_weights, k=1)[0]
-
+ 
         if role == "new" or not bases:
             template = rng.choices(bank_templates, weights=bank_weights, k=1)[0]
             filled = _fill_template(template, fake)
@@ -268,7 +277,7 @@ def make_traffic(n: int = 10_000,
             base_fp = fp.fingerprints([filled])[0]
             bases.append((template, filled, idx, base_fp))
             continue
-
+ 
         template, base_prompt, base_idx, base_fp = rng.choice(bases)
         if role == "T1":
             text = base_prompt
@@ -290,23 +299,22 @@ def make_traffic(n: int = 10_000,
                     t3_validation_stats.get(f"passed_via_{strategy}", 0) + 1)
             else:
                 # didn't pass real semantic validation — don't claim T3;
-
                 t3_validation_stats["fallback"] += 1
                 role = "unique"  
         elif role == "T4":
             text = _near_duplicate(template, base_prompt, fake)
         items.append({"text": text, "tier": role, "depends_on": base_idx})
-
+ 
     for _ in range(n_unique):
         items.append({"text": _unique_prompt(fake), "tier": "unique", "depends_on": None})
-
+ 
     children = defaultdict(list)
     indegree = [0] * len(items)
     for i, it in enumerate(items):
         if it["depends_on"] is not None:
             children[it["depends_on"]].append(i)
             indegree[i] = 1
-
+ 
     ready = [i for i in range(len(items)) if indegree[i] == 0]
     rng.shuffle(ready)
     order = []
@@ -317,17 +325,17 @@ def make_traffic(n: int = 10_000,
             indegree[c] -= 1
             if indegree[c] == 0:
                 ready.insert(rng.randrange(len(ready) + 1), c)
-
+ 
     prompts = [items[i]["text"] for i in order]
     tiers = [items[i]["tier"] for i in order]
-
+ 
     position_of_original_index = {orig_i: pos for pos, orig_i in enumerate(order)}
     base_of = [
         position_of_original_index[items[i]["depends_on"]]
         if items[i]["depends_on"] is not None else None
         for i in order
     ]
-
+ 
     t3_validation_stats["by_strategy"] = strategy_stats
     return SynthResult(prompts=prompts, tiers=tiers, base_of=base_of,
                         t3_validation=t3_validation_stats)
