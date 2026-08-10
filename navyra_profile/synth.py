@@ -37,7 +37,7 @@ from faker import Faker
 class SynthResult:
     prompts: list[str] = field(default_factory=list)
     tiers: list[str] = field(default_factory=list)  # "T1"/"T2"/"T3"/"T4"/"unique", parallel to prompts
- 
+    base_of: list[int | None] = field(default_factory=list)
 
  
 _FAKER_SLOTS = {
@@ -259,5 +259,13 @@ def make_traffic(n: int = 10_000,
  
     prompts = [items[i]["text"] for i in order]
     tiers = [items[i]["tier"] for i in order]
+
+    position_of_original_index = {orig_i: pos for pos, orig_i in enumerate(order)}
+    base_of = [
+        position_of_original_index[items[i]["depends_on"]]
+        if items[i]["depends_on"] is not None else None
+        for i in order
+    ]
  
-    return SynthResult(prompts=prompts, tiers=tiers)
+    return SynthResult(prompts=prompts, tiers=tiers, base_of=base_of)
+ 
