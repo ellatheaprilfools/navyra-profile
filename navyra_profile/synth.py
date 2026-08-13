@@ -1,27 +1,3 @@
-"""
-navyra_profile.synth — synthetic traffic generation.  [TO BUILD]
-
-PROJECT TASK 4. Generate realistic synthetic LLM traffic with a KNOWN
-ground-truth templatedness, so the profiler's estimates can be validated:
-
-  make_traffic(n=10_000, template_share=0.4, n_templates=25,
-               paraphrase_strength=0.3, seed=0) -> list[str]
-
-Approaches to explore (pick and justify):
-- template banks with slot-filling (names, dates, amounts from faker)
-- paraphrase augmentation (rule-based swaps; optionally a small local
-  paraphrase model)
-- mixing in genuinely diverse text (public domain corpora) as the
-  non-templated share
-
-Generators must produce KNOWN quantities of each tier: exact repeats
-(tier 1), same-bucket paraphrases (tier 2), cross-bucket paraphrases
-(tier 3), and near-duplicates differing only in a digit/date/name
-(tier 4). The validation harness (task 5) sweeps these shares and checks
-each reported tier tracks its ground truth. That closes the loop: we can
-then state the profiler's per-tier accuracy quantitatively.
-"""
-
 from __future__ import annotations
 
 import random
@@ -34,7 +10,6 @@ from faker import Faker
 
 from .analyser import _bucket
 from .fingerprint import Fingerprinter, hamming
-
 
 _VALIDATION_RADIUS = 6
 
@@ -169,50 +144,62 @@ def _make_validated_t3(base_prompt: str, base_fp, strength: float,
     """Generate a T3 candidate and VALIDATE it directly against the real
     Fingerprinter — the same mechanism analyse() itself uses — rather
     than assuming any particular construction method preserves meaning.
-    Retries with fresh randomness until a candidate both crosses into a
-    different length bucket AND stays within the analyzer's own match
-    radius of its base. Falls back to the closest attempt if none pass
-    within max_attempts (rare, but text-generation constraints mean a
-    perfect candidate isn't always guaranteed on the first few tries).
- 
-    Returns (text, passed_validation: bool).
+
+    Returns (text, passed_validation: bool, strategy: str | None).
     """
     base_bucket = _bucket(len(base_prompt.split()), bucket_size)
-    best_candidate = None
-    best_distance = None
-    strategy_used = None
- 
+
+    best_overall_candidate = None
+    best_overall_distance = None
+    best_overall_strategy = None
+
+    best_passing_candidate = None
+    best_passing_distance = None
+    best_passing_strategy = None
+
     def _try(candidate, strategy_name):
-        nonlocal best_candidate, best_distance
+        nonlocal best_overall_candidate, best_overall_distance, best_overall_strategy
+        nonlocal best_passing_candidate, best_passing_distance, best_passing_strategy
+
         if candidate is None or candidate in used:
-            return None
+            return
         if _bucket(len(candidate.split()), bucket_size) == base_bucket:
-            return None  # didn't actually cross buckets
+            return  # didn't actually cross buckets
+
         cand_fp = fp.fingerprints([candidate])[0]
         d = int(hamming(np.array([cand_fp]), np.uint64(base_fp))[0])
         strategy_stats[strategy_name]["attempted"] += 1
-        if best_distance is None or d < best_distance:
-            best_candidate, best_distance = candidate, d
+
+        if best_overall_distance is None or d < best_overall_distance:
+            best_overall_candidate = candidate
+            best_overall_distance = d
+            best_overall_strategy = strategy_name
+
         if d <= _VALIDATION_RADIUS:
             strategy_stats[strategy_name]["valid"] += 1
-            return candidate
-        return None
- 
+            if best_passing_distance is None or d < best_passing_distance:
+                best_passing_candidate = candidate
+                best_passing_distance = d
+                best_passing_strategy = strategy_name
+
     for _ in range(max_attempts):
+        # Every round, independently generate and validate a candidate
+        # from each strategy. Lengthening is checked FIRST since it was
+        # measured to outperform shortening (9.4% vs 4.6% valid rate,
+        # fairly compared) — contrary to the original hypothesis that
+        # removing scaffolding would preserve meaning better.
         short_candidate = _paraphrase_cross_bucket_shorter(
             base_prompt, strength, rng, bucket_size)
         long_candidate = _paraphrase_cross_bucket(
             base_prompt, strength, rng, bucket_size)
- 
-        long_pass = _try(long_candidate, "longer")
-        if long_pass:
-            return long_pass, True, "longer"
- 
-        short_pass = _try(short_candidate, "shorter")
-        if short_pass:
-            return short_pass, True, "shorter"
- 
-    return (best_candidate or base_prompt), False, strategy_used
+
+        _try(long_candidate, "longer")
+        _try(short_candidate, "shorter")
+
+    if best_passing_candidate is not None:
+        return best_passing_candidate, True, best_passing_strategy
+
+    return (best_overall_candidate or base_prompt), False, best_overall_strategy
 
 
 def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
@@ -244,14 +231,14 @@ def make_traffic(n: int = 10_000,
     rng = random.Random(seed)
     fake = Faker()
     fake.seed_instance(seed)
- 
+
     bank = _build_template_bank(n_templates)
     bank_templates = [t for t, w in bank]
     bank_weights = [w for t, w in bank]
- 
+
     n_templated = round(n * template_share)
     n_unique = n - n_templated
- 
+
     items = []
     bases = []  # (template, filled_text, item_index, fingerprint)
     used_variants = defaultdict(set)
@@ -260,31 +247,49 @@ def make_traffic(n: int = 10_000,
         "shorter": {"attempted": 0, "valid": 0},
         "longer": {"attempted": 0, "valid": 0},
     }
- 
+
+    # Tracks the normalised text (matching analyzer.py's own exact-match
+    # normalization: lowercase, whitespace-collapsed) of every prompt
+    # generated so far — bases and derived copies alike. used_variants
+    # above only prevents a base's OWN repeated derivatives from
+    # colliding with each other; it doesn't stop, e.g., a T2 paraphrase
+    # of base A from coincidentally matching a T4 near-duplicate of a
+    # completely different base B. That cross-base collision class was
+    # found to inflate the analyzer's true exact-match count beyond our
+    # deliberate T1 assignments — see commit history. T1 prompts are
+    # intentionally excluded from this check, since producing identical
+    # text to their own base is the whole point of T1.
+    all_normalized_texts: set = set()
+
+    def _norm_for_dedup(text: str) -> str:
+        return " ".join(text.lower().split())
+
     fp = Fingerprinter()  # created once — reused for every base and T3 candidate
- 
+
     roles = list(_TIER_MIX)
     role_weights = list(_TIER_MIX.values())
- 
+
     for _ in range(n_templated):
         role = rng.choices(roles, weights=role_weights, k=1)[0]
- 
+
         if role == "new" or not bases:
             template = rng.choices(bank_templates, weights=bank_weights, k=1)[0]
             filled = _fill_template(template, fake)
             idx = len(items)
             items.append({"text": filled, "tier": "unique", "depends_on": None})
+            all_normalized_texts.add(_norm_for_dedup(filled))
             base_fp = fp.fingerprints([filled])[0]
             bases.append((template, filled, idx, base_fp))
             continue
- 
+
         template, base_prompt, base_idx, base_fp = rng.choice(bases)
         if role == "T1":
             text = base_prompt
         elif role == "T2":
             text = _paraphrase(base_prompt, paraphrase_strength, rng)
             attempts = 0
-            while text in used_variants[base_idx] and attempts < 5:
+            while (text in used_variants[base_idx]
+                   or _norm_for_dedup(text) in all_normalized_texts) and attempts < 8:
                 text = _paraphrase(base_prompt, paraphrase_strength, rng)
                 attempts += 1
             used_variants[base_idx].add(text)
@@ -298,23 +303,31 @@ def make_traffic(n: int = 10_000,
                 t3_validation_stats[f"passed_via_{strategy}"] = (
                     t3_validation_stats.get(f"passed_via_{strategy}", 0) + 1)
             else:
-                # didn't pass real semantic validation — don't claim T3;
                 t3_validation_stats["fallback"] += 1
                 role = "unique"  
         elif role == "T4":
             text = _near_duplicate(template, base_prompt, fake)
+            attempts = 0
+            while _norm_for_dedup(text) in all_normalized_texts and attempts < 8:
+                text = _near_duplicate(template, base_prompt, fake)
+                attempts += 1
+
+        if role != "T1":
+            # T1 is EXPECTED to normalize-match its base — don't add it
+            # to the collision set as if it were a new, distinct text
+            all_normalized_texts.add(_norm_for_dedup(text))
         items.append({"text": text, "tier": role, "depends_on": base_idx})
- 
+
     for _ in range(n_unique):
         items.append({"text": _unique_prompt(fake), "tier": "unique", "depends_on": None})
- 
+
     children = defaultdict(list)
     indegree = [0] * len(items)
     for i, it in enumerate(items):
         if it["depends_on"] is not None:
             children[it["depends_on"]].append(i)
             indegree[i] = 1
- 
+
     ready = [i for i in range(len(items)) if indegree[i] == 0]
     rng.shuffle(ready)
     order = []
@@ -325,17 +338,17 @@ def make_traffic(n: int = 10_000,
             indegree[c] -= 1
             if indegree[c] == 0:
                 ready.insert(rng.randrange(len(ready) + 1), c)
- 
+
     prompts = [items[i]["text"] for i in order]
     tiers = [items[i]["tier"] for i in order]
- 
+
     position_of_original_index = {orig_i: pos for pos, orig_i in enumerate(order)}
     base_of = [
         position_of_original_index[items[i]["depends_on"]]
         if items[i]["depends_on"] is not None else None
         for i in order
     ]
- 
+
     t3_validation_stats["by_strategy"] = strategy_stats
     return SynthResult(prompts=prompts, tiers=tiers, base_of=base_of,
                         t3_validation=t3_validation_stats)
