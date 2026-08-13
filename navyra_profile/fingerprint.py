@@ -42,6 +42,11 @@ class EmbeddingBackend:
     dim: int = 0
 
     def embed(self, texts: list[str]) -> np.ndarray:
+        """Embed a list of input `texts` returning an array of shape
+        `[n, d]` with dtype `float32`.
+
+        Implementations must provide this method.
+        """
         raise NotImplementedError
 
 
@@ -49,11 +54,18 @@ class SentenceTransformerBackend(EmbeddingBackend):
     """Default quality backend. pip install sentence-transformers"""
 
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        """Initialise the sentence-transformers backend using `model_name`.
+
+        The selected model is loaded lazily at construction time.
+        """
         from sentence_transformers import SentenceTransformer
         self.model = SentenceTransformer(model_name)
         self.dim = self.model.get_sentence_embedding_dimension()
 
     def embed(self, texts: list[str]) -> np.ndarray:
+        """Encode `texts` to L2-normalised float32 embeddings.
+        Returns an array of shape `[n, d]`.
+        """
         return np.asarray(
             self.model.encode(texts, show_progress_bar=False,
                               normalize_embeddings=True),
@@ -66,9 +78,18 @@ class HashingBackend(EmbeddingBackend):
     the package importable/testable anywhere. Do not use for real studies."""
 
     def __init__(self, dim: int = 256):
+        """Initialise the hashing backend with an output `dim`.
+
+        This backend is a deterministic, dependency-free fallback for
+        testing and environments without ML libraries.
+        """
         self.dim = dim
 
     def _vec(self, text: str) -> np.ndarray:
+        """Compute a dense vector for `text` via character/word n-gram
+        hashing and L2-normalise the result. Returns a float32 vector of
+        length `self.dim`.
+        """
         v = np.zeros(self.dim, dtype=np.float32)
         toks = re.findall(r"\w+", text.lower())
         grams = toks + [" ".join(p) for p in zip(toks, toks[1:])]
@@ -79,10 +100,20 @@ class HashingBackend(EmbeddingBackend):
         return v / n if n > 0 else v
 
     def embed(self, texts: list[str]) -> np.ndarray:
+        """Embed `texts` using the internal `_vec` hashing heuristic.
+
+        Returns an array of shape `[n, dim]` and dtype `float32`.
+        """
         return np.stack([self._vec(t) for t in texts])
 
 
 def default_backend() -> EmbeddingBackend:
+    """Return the preferred `EmbeddingBackend`.
+
+    Attempts to construct a high-quality `SentenceTransformerBackend` and
+    falls back to the lightweight `HashingBackend` with a warning when
+    `sentence-transformers` is not installed.
+    """
     try:
         return SentenceTransformerBackend()
     except ImportError:
@@ -107,6 +138,10 @@ class Fingerprinter:
     _proj: np.ndarray | None = None
 
     def _projection(self, dim: int) -> np.ndarray:
+        """Return a cached random projection matrix of shape
+        `(dim, FINGERPRINT_BITS)`. The matrix is generated with a fixed
+        RNG seed so fingerprints are reproducible across runs.
+        """
         if self._proj is None or self._proj.shape[0] != dim:
             rng = np.random.default_rng(_RNG_SEED)
             self._proj = rng.standard_normal((dim, FINGERPRINT_BITS)) \

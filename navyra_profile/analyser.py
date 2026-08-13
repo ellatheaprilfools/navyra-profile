@@ -39,6 +39,12 @@ from .fingerprint import Fingerprinter, hamming
 
 @dataclass
 class TrafficReport:
+    """Summary statistics describing templatedness of a prompt stream.
+
+    Fields record per-tier shares (T1..T3), counts of near-duplicates
+    (T4), cluster statistics and a small warmup history useful for the
+    cache warm-up chart.
+    """
     n_prompts: int = 0
     # tiered waterfall
     exact_repeat_rate: float = 0.0        # tier 1: prefix-caching territory
@@ -56,6 +62,10 @@ class TrafficReport:
     notes: str = ""
 
     def summary(self) -> str:
+        """Return a compact multi-line text summary of the report.
+
+        Intended for terminal display and quick inspection.
+        """
         lines = [
             f"prompts analysed          : {self.n_prompts:,}",
             f"T1 exact repeats          : {self.exact_repeat_rate:.1%}  "
@@ -103,7 +113,11 @@ def analyse(prompts: list[str],
 
     # ---- tier 1: exact repeats (normalised hash) -------------------------
     import hashlib as _h
-    def _norm(p): return " ".join(p.lower().split())
+    def _norm(p):
+        """Normalise a prompt for exact-repeat detection: lowercase and
+        collapse whitespace.
+        """
+        return " ".join(p.lower().split())
     seen_exact: set = set()
     exact = np.zeros(len(prompts), dtype=bool)
 

@@ -41,6 +41,12 @@ _VALIDATION_RADIUS = 6
 
 @dataclass
 class SynthResult:
+    """Result container for `make_traffic`.
+
+    Contains generated `prompts`, their `tiers`, `base_of` relationships
+    (index of the base prompt when applicable), and `t3_validation`
+    statistics describing how many T3 candidates were validated.
+    """
     prompts: list[str] = field(default_factory=list)
     tiers: list[str] = field(default_factory=list)
     base_of: list[int | None] = field(default_factory=list)
@@ -207,6 +213,12 @@ def _make_validated_t3(base_prompt: str, base_fp, strength: float,
     strategy_used = None
  
     def _try(candidate, strategy_name):
+        """Attempt to validate `candidate` under `strategy_name`.
+
+        Updates `best_candidate`/`best_distance` and records attempts/valid
+        counts in `strategy_stats`. Returns the candidate when it passes
+        validation, otherwise `None`.
+        """
         nonlocal best_candidate, best_distance
         if candidate is None or candidate in used:
             return None

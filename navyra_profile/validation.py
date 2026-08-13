@@ -18,6 +18,11 @@ from .synth import make_traffic
 
 @dataclass
 class SweepPoint:
+    """A single point in a sweep comparing generator ground truth vs report.
+
+    Holds the template share, ground-truth tier shares, reported values and
+    derived signed errors computed in `__post_init__`.
+    """
     template_share: float
     n: int
 
@@ -54,8 +59,13 @@ class SweepPoint:
 class SweepResult:
     points: list[SweepPoint] = field(default_factory=list)
 
+    """Container for a collection of `SweepPoint`s with a human-readable
+    `summary()` helper and internal accuracy aggregation.
+    """
+
     def summary(self) -> str:
-    
+        """Return a multi-line summary table and aggregate accuracy text.
+        """
         lines = [
             f"{'share':>6} {'T1 true':>8} {'T1 rep':>8} {'T1 err':>8}  "
             f"{'T2 true':>8} {'T2 rep':>8} {'T2 err':>8}  "
@@ -73,6 +83,11 @@ class SweepResult:
         return "\n".join(lines)
 
     def _accuracy_summary(self) -> str:
+        """Return a short text block describing mean absolute errors.
+
+        The nested `mean_abs_error` helper computes the MAE for a list of
+        signed errors, returning 0.0 for an empty list.
+        """
         def mean_abs_error(errors: list[float]) -> float:
             return sum(abs(e) for e in errors) / len(errors) if errors else 0.0
 

@@ -59,6 +59,10 @@ pre.summary { background: #f6f6f6; padding: 12px; border-radius: 6px; overflow-x
  
 
 def _fig_to_base64(fig) -> str:
+    """Serialize a Matplotlib `fig` to a base64-encoded PNG string.
+
+    The returned string can be embedded directly in an HTML `<img>` tag.
+    """
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
@@ -121,12 +125,20 @@ def _build_waterfall_chart(report: TrafficReport) -> str:
 
 
 def _waterfall_chart(report: TrafficReport) -> str:
+    """Return a base64 PNG string for the waterfall chart for `report`.
+
+    Returns an empty string when the figure cannot be produced.
+    """
     fig = _build_waterfall_chart(report)
     if fig is None:
         return ""
     return _fig_to_base64(fig)
 
 def _build_hit_rate_by_bucket_chart(report: TrafficReport) -> str:
+    """Build a matplotlib figure showing hit rate per length bucket.
+
+    Returns a figure object, or `None` when there is no bucket data.
+    """
     if not report.hit_rate_by_bucket:
         return None
 
@@ -175,6 +187,10 @@ def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
 
 
 def _build_cluster_size_chart(report: TrafficReport) -> str:
+    """Build a matplotlib figure showing the distribution of cluster sizes.
+
+    Returns a figure object, or `None` when there are no clusters.
+    """
     if not report.cluster_sizes:
         return None
     top = report.cluster_sizes[:20]
@@ -219,6 +235,12 @@ def _cluster_size_chart(report: TrafficReport) -> str:
 
 
 def _build_warmup_chart(report: TrafficReport) -> str:
+    """Build a matplotlib figure showing the cache warm-up curve.
+
+    The plot shows how the observed T2 hit rate evolves as prompts are
+    processed in their original order. Returns a figure or `None` when
+    no warmup history is present.
+    """
     history = getattr(report, "warmup_history", [])
     if not history:
         return None
@@ -250,6 +272,9 @@ def _build_warmup_chart(report: TrafficReport) -> str:
 
 
 def _warmup_chart(report: TrafficReport) -> str:
+    """Return a base64 PNG string for the warm-up chart, or empty string
+    when no data is available.
+    """
     fig = _build_warmup_chart(report)
     if fig is None:
         return ""
@@ -257,6 +282,9 @@ def _warmup_chart(report: TrafficReport) -> str:
 
 
 def _highlight_diff(a: str, b: str) -> tuple[str, str]:
+    """Return marked-up HTML snippets highlighting differences between
+    token sequences `a` and `b`.
+    """
     a_words, b_words = a.split(), b.split()
     sm = difflib.SequenceMatcher(None, a_words, b_words)
     out_a, out_b = [], []
@@ -274,6 +302,9 @@ def _highlight_diff(a: str, b: str) -> tuple[str, str]:
     return " ".join(out_a), " ".join(out_b)
 
 def _near_dup_box(report: TrafficReport) -> str:
+    """Return HTML for the near-duplicate risk box, showing example
+    near-duplicate prompt pairs with differing tokens highlighted.
+    """
     if not report.near_dup_examples:
         return "<p>No near-duplicate risk pairs found in this sample.</p>"
 
