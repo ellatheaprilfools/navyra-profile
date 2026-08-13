@@ -19,6 +19,11 @@ from .fingerprint import Fingerprinter
 
 
 def _read_prompts(path, field):
+    """Read JSONL `path` and extract the value under `field` from each line.
+
+    Returns a list of prompt strings. Raises `ValueError` for malformed
+    JSON or if the expected `field` is missing on any line.
+    """
     prompts = []
     with open(path) as f:
         for line_no, line in enumerate(f, start=1):
@@ -37,6 +42,11 @@ def _read_prompts(path, field):
 
 
 def _cmd_analyse(args):
+    """Handler for the `analyse` subcommand.
+
+    Reads prompts from the provided file, runs `analyse()` and prints a
+    text summary. If `--html` is given, attempts to write an HTML report.
+    """
     prompts = _read_prompts(args.file, args.field)
     report = analyse(prompts, radius=args.radius)
     print(report.summary())
@@ -51,6 +61,11 @@ def _cmd_analyse(args):
         print(f"\nwrote HTML report to {args.html}")
 
 def _cmd_synth(args: argparse.Namespace) -> None:
+    """Handler for the `synth` subcommand.
+
+    Generates synthetic traffic using `make_traffic()` and writes JSONL to
+    the requested output path.
+    """
     from .synth import make_traffic
     result = make_traffic(
         n=args.n,
@@ -65,6 +80,9 @@ def _cmd_synth(args: argparse.Namespace) -> None:
     print(f"wrote {len(result.prompts):,} synthetic prompts to {args.output}")
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construct and return the top-level `argparse.ArgumentParser` for
+    the CLI.
+    """
     parser = argparse.ArgumentParser(prog="navyra-profile")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -87,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 def main() -> None:
+    """CLI entrypoint: parse arguments and dispatch to subcommand
+    handlers. Exits the process on common error conditions.
+    """
     parser = build_parser()
     args = parser.parse_args()
     try:

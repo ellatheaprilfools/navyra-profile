@@ -55,6 +55,7 @@ class SweepResult:
     points: list[SweepPoint] = field(default_factory=list)
 
     def summary(self) -> str:
+    
         lines = [
             f"{'share':>6} {'T1 true':>8} {'T1 rep':>8} {'T1 err':>8}  "
             f"{'T2 true':>8} {'T2 rep':>8} {'T2 err':>8}  "
@@ -87,6 +88,10 @@ class SweepResult:
 
 
 def _tier_share_of_total(tiers: list[str], label: str) -> float:
+    """Return the fraction of `tiers` equal to `label`.
+
+    Returns 0.0 when `tiers` is empty.
+    """
     if not tiers:
         return 0.0
     return sum(1 for t in tiers if t == label) / len(tiers)

@@ -67,6 +67,10 @@ def _fig_to_base64(fig) -> str:
     return encoded
 
 def _build_waterfall_chart(report: TrafficReport) -> str:
+    """Build a waterfall chart showing the tiered breakdown of traffic:
+    T1 exact repeats (already free) -> T2 same-bucket semantic (addressable today) -> T3 cross-bucket semantic (future) -> remainder (unique traffic).
+    Returns a matplotlib figure object.
+    """
     t1 = report.exact_repeat_rate
     sem_share = 1.0 - t1
     t2 = report.would_hit_rate * sem_share
@@ -160,10 +164,14 @@ def _build_hit_rate_by_bucket_chart(report: TrafficReport) -> str:
     return fig
 
 def _hit_rate_by_bucket_chart(report: TrafficReport) -> str:
+    """Return a base64 PNG string for the hit-rate-by-bucket chart.
+
+    Returns an empty string when there is no data to plot.
+    """
     fig = _build_hit_rate_by_bucket_chart(report)
     if not fig:
         return ""
-    return _fig_to_base64(_build_hit_rate_by_bucket_chart(report))
+    return _fig_to_base64(fig)
 
 
 def _build_cluster_size_chart(report: TrafficReport) -> str:
@@ -200,6 +208,10 @@ def _build_cluster_size_chart(report: TrafficReport) -> str:
     return fig
 
 def _cluster_size_chart(report: TrafficReport) -> str:
+    """Return a base64 PNG string for the cluster-size chart.
+
+    Returns an empty string when there is no cluster data.
+    """
     fig = _build_cluster_size_chart(report)
     if fig is None:
         return ""
