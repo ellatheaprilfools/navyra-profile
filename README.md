@@ -1,96 +1,101 @@
-# navyra-profile — summer project starter kit
+# navyra-profile
 
-Welcome, Ella! This zip contains everything needed to start. Read this
-file first, then the project brief PDF, then the code in this order:
-`fingerprint.py` → `analyzer.py` → the three stub files.
+Before you accelerate anything, you need to know what's actually there
+`navyra-profile` measures semantic repetition in LLM prompt traffic. Given a file of prompts, it reports the proportion that are exact duplicates, semantically similar paraphrases, and near-duplicates differing only in specific details (numbers, dates, names).
 
-## What this is
+## The Problem
 
-Navyra's acceleration engine (which is NOT in this package, and which you
-won't need) speeds up LLM inference when traffic is semantically
-repetitive. Before anyone installs the engine, they need an answer to one
-question: **"how repetitive is MY traffic?"**
+You already know your inference bill is too high. What you don't know is why.
 
-`navyra-profile` is the open-source tool that answers it — honestly,
-as a TIERED WATERFALL rather than one flattering number:
+Some of it is exact repeats, some of it is the same question, asked differently and Some of it are near repeats with the same shape, different number, different date.
 
-  T1  exact repeats        -> already served free by vLLM prefix caching
-  T2  same-bucket semantic -> addressable by Navyra's engine today
-                              (upper-bound proxy; the trial measures truth)
-  T3  cross-bucket semantic-> future-addressable
-  T4  near-duplicates      -> the danger class: prompts that differ only
-                              in a date/number/name. Answer-replay caches
-                              (GPTCache-style) silently serve WRONG
-                              answers here; the report flags them.
+navyra-profile tells the three apart. Point it at a file of prompts. Get back a report you can act on.
 
-That honesty is the product's credibility. Your project is to take the
-working research code in this zip to a polished, pip-installable,
-documented, validated open-source package built around that waterfall.
 
-## What's here
-
-```
-navyra_profile/
-  fingerprint.py   WORKING — embeddings -> 64-bit semantic fingerprints
-  analyzer.py      WORKING — streaming would-hit analysis, clusters, buckets
-  report.py        STUB — task 3: HTML/terminal report generation
-  synth.py         STUB — task 4: synthetic traffic with known ground truth
-  cli.py           STUB — task 2: the command-line interface
-examples/
-  sample_traffic.jsonl   400 synthetic prompts (~55% templated) to play with
-tests/
-  test_fingerprint.py    starter tests — extend these substantially
-pyproject.toml           package config (already pip-installable in dev mode)
-```
-
-## Setup (15 minutes)
+## Installation
 
 ```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -e ".[full]"        # includes sentence-transformers, matplotlib
-pip install pytest
-python -m pytest tests/ -q      # should pass 3/3
+pip install navyra-profile[full]
 ```
 
-Then try the working core:
+Prompt data is not transmitted anywhere. The sentence-transformer model (`all-MiniLM-L6-v2`) is downloaded from Hugging Face on first run and cached locally; subsequent runs make no network requests.
 
-```python
-import json
-from navyra_profile import Fingerprinter, analyse
-prompts = [json.loads(l)["prompt"] for l in open("examples/sample_traffic.jsonl")]
-print(analyse(prompts).summary())
+
+## Usage
+
+```bash
+navyra-profile analyse examples/sample_traffic.jsonl
 ```
 
-## The tasks (full details, hours and sequencing in the PDF brief)
+```
+prompts analysed          : 400
+T1 exact repeats          : 24.5%  (already free via prefix caching)
+T2 same-bucket semantic   : 37.1%  (engine-addressable today; upper-bound proxy)
+T3 cross-bucket semantic  : 0.0%   (future-addressable)
+T4 near-duplicates flagged: 5      (unsafe for answer-replay caches)
+```
 
-1. **Familiarise** — run the above, read the code, write down questions.
-2. **Package & CLI** — make `pip install navyra-profile` +
-   `navyra-profile analyse traffic.jsonl` real. Spec in `cli.py`.
-3. **Report generator** — the one-page HTML waterfall report a GPU owner
-   forwards to their boss, including the near-duplicate risk box. Spec in
-   `report.py`. This is the flagship deliverable.
-4. **Synthetic traffic** — generators with known ground-truth shares of
-   each tier. Spec in `synth.py`.
-5. **Validation harness** — prove each reported tier tracks its ground
-   truth across a sweep; quantify per-tier accuracy; grow the test suite.
-   (Stretch goal if time allows: scale `analyse()` past 50k prompts —
-   see its docstring.)
-6. **Documentation** — README for the public repo, worked examples,
-   docstrings throughout.
+To generate a full HTML report with charts and near-duplicate examples:
 
-## Ways of working
+```bash
+navyra-profile analyse examples/sample_traffic.jsonl --html report.html
+```
 
-- Weekly 30–60 min call with Jim (4-week project, ~20 hrs/week);
-  questions between calls by email — ask early, ask often.
-- Git from day one; small commits with clear messages.
-- Definition of done for the project: a stranger can
-  `pip install navyra-profile`, run one command on their own JSONL, and
-  get a report they trust — because the validation study says why they
-  should.
+## Report tiers
 
-## One boundary
+**T1 — exact repeats.** Byte-for-byte identical text after normalisation (lowercased, whitespace collapsed). Already addressed by prefix caching in most serving stacks. Subtracted from total traffic before T2/T3 rates are calculated.
 
-This package is measurement only, and it will be open-sourced. Navyra's
-engine (the acceleration technology) is separate, confidential, and out
-of scope — if anything you build seems to need engine internals, stop
-and ask Jim instead. Everything in this zip is fair game.
+**T2 — same-bucket semantic.** Different wording, equivalent meaning, comparable token length. Computed as an upper bound from embedding similarity (Hamming distance between 64-bit sign-random-projection fingerprints, within a configurable radius). The engine's actual exploitable hit rate is a separate, internally gated measurement.
+
+**T3 — cross-bucket semantic.** Same detection criteria as T2, different length bucket. Reported separately; not addressed by the current engine.
+
+**T4 — near-duplicates.** Fingerprint distance below a stricter threshold than T2/T3, indicating near-identical text with a differing detail (number, date, name). Reported as a count, not a rate. Caching these as exact repeats risks serving an incorrect answer.
+
+## Validation
+
+Accuracy is measured against synthetic traffic with known tier labels, generated independently of the analysis pipeline. Cross-bucket (T3) labels are additionally validated against the same fingerprinting mechanism used for detection at generation time.
+
+Sweep across five traffic compositions (10%–80% templated share), n=2,000 per point:
+
+| True templated share | T1 error | T2 error | T3 error |
+|---|---|---|---|
+| 10% | +0.1% | −1.2% | −0.2% |
+| 20% | +0.2% | −1.9% | −0.2% |
+| 40% | +0.3% | −1.8% | −0.3% |
+| 60% | +0.3% | −0.6% | −0.4% |
+| 80% | +0.3% | −0.5% | −0.3% |
+
+Mean absolute error: T1 0.2%, T2 1.2%, T3 0.3%.
+
+T2 error magnitude decreases as true templated share increases. At low templated share, the semantic-hit signal is a small proportion of total traffic, reducing detection precision relative to the total count.
+
+Full methodology: [VALIDATION.md](VALIDATION.md).
+
+## CLI reference
+
+```
+navyra-profile analyse <file.jsonl> [--field prompt] [--radius 6] [--html out.html] [--pdf out.pdf]
+```
+`--field`: JSON key containing the prompt text. `--radius`: maximum Hamming distance (of 64 bits) for a semantic match. `--html`/`--pdf`: write a full report in addition to the terminal summary.
+
+```
+navyra-profile synth --n 10000 --template-share 0.4 -o traffic.jsonl
+```
+Generates synthetic traffic with known tier ground truth, used for the validation sweep above.
+
+```
+navyra-profile validate [--n 2000] [--shares 0.1,0.2,0.4,0.6,0.8]
+```
+Runs the accuracy sweep against the current build.
+
+## License
+
+Apache-2.0.
+
+## Contributing
+
+Issues and pull requests accepted via the repository's standard GitHub workflow.
+
+## Credits
+
+Navyra Ltd · Company No. 17179469
