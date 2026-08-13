@@ -7,7 +7,7 @@ Before you accelerate anything, you need to know what's actually there
 
 You already know your inference bill is too high. What you don't know is why.
 
-Some of it is exact repeats, some of it is the same question, asked differently and Some of it are near repeats with the same shape, different number, different date.
+Some of it is exact repeats, some of it is the same question, asked differently, some of it are near repeats with the same shape, different number, different date.
 
 navyra-profile tells the three apart. Point it at a file of prompts. Get back a report you can act on.
 
