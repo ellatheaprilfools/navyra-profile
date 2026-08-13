@@ -84,7 +84,7 @@ def _fill_template(template: str, fake: Faker) -> str:
 
 _SYNONYM_SWAPS = {
     "status": ["state", "progress", "current state", "standing", "condition"],
-    "summarize": ["summarise", "give an overview of", "recap", "outline", "break down"],
+    "summarise": ["give an overview of", "recap", "outline", "break down"],
     "weather": ["forecast", "conditions", "climate", "outlook"],
     "confirm": ["verify", "double-check", "validate", "check", "make sure of"],
     "contact": ["reach", "get in touch with", "connect with", "speak to", "reach out to"],
