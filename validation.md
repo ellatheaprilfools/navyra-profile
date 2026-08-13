@@ -10,21 +10,21 @@ Synthetic traffic was generated at five `template_share` values — 0.1, 0.2, 0.
 
 | True templated share | T1 error | T2 error | T3 error |
 |---|---|---|---|
-| 10% | +0.1% | −1.2% | −0.2% |
-| 20% | +0.2% | −1.9% | −0.2% |
-| 40% | +0.3% | −1.8% | −0.3% |
-| 60% | +0.3% | −0.6% | −0.4% |
-| 80% | +0.3% | −0.5% | −0.3% |
+| 10% | +0.1% | −0.9% | −0.1% |
+| 20% | +0.3% | −1.1% | −0.1% |
+| 40% | +0.5% | −1.3% | +0.0% |
+| 60% | +0.9% | −0.9% | +0.0% |
+| 80% | +1.2% | −1.2% | +0.0% |
 
-Mean absolute error across the sweep: T1 0.2 points, T2 1.2 points, T3 0.3 points.
+Mean absolute error across the sweep: T1 0.6 points, T2 1.1 points, T3 0.1 points.
 
 ## Findings
 
-T1 exact-repeat detection uses text matching, not model judgment. Error stays within 0.3 points across the full range tested.
+T1 exact-repeat detection uses text matching, not model judgment. Error grows with true templated share, from 0.1 points at 10% to 1.2 points at 80%. This is consistent with more templated traffic producing more opportunities for coincidental exact-text collisions between unrelated generated prompts, at the fixed n=2,000 tested here — a property of traffic composition, not of the detection mechanism itself.
 
-T3 cross-bucket detection requires the tool to match semantically similar prompts of different lengths. Error stays within 0.4 points across the full range tested, despite this being a harder detection problem in principle than same-length matching.
+T3 cross-bucket detection requires the tool to match semantically similar prompts of different lengths. Error is at or below 0.1 points across the full range tested — the tightest result of the three tiers, despite this being a harder detection problem in principle than same-length matching.
 
-T2 same-bucket detection underestimates the true rate at low template share and the error shrinks as template share increases: 1.2 points at 10% true templated share, 0.5 points at 80%. At low template share, genuine semantic matches are a small signal within a larger pool of unrelated traffic, reducing detection reliability proportionally. Absolute error remains small throughout the range. Detection accuracy is highest at higher repetition levels, which is where the tool has the most value.
+T2 same-bucket detection underestimates the true rate throughout the range tested, by 0.9 to 1.3 points, without a clear trend as true templated share increases. Absolute error remains small throughout.
 
 ## Limitations
 

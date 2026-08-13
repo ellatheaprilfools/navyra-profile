@@ -51,41 +51,27 @@ navyra-profile analyse examples/sample_traffic.jsonl --html report.html
 
 **T4 — near-duplicates.** Fingerprint distance below a stricter threshold than T2/T3, indicating near-identical text with a differing detail (number, date, name). Reported as a count, not a rate. Caching these as exact repeats risks serving an incorrect answer.
 
-## Validation
+Validation
+
+T1 0.6% · T2 1.1% · T3 0.1% — mean absolute error against known ground truth, swept across five traffic compositions from 10% to 80% templated.
 
 Accuracy is measured against synthetic traffic with known tier labels, generated independently of the analysis pipeline. Cross-bucket (T3) labels are additionally validated against the same fingerprinting mechanism used for detection at generation time.
 
-Sweep across five traffic compositions (10%–80% templated share), n=2,000 per point:
+Full sweep table, per-tier findings, and known limitations: VALIDATION.md.
 
-| True templated share | T1 error | T2 error | T3 error |
-|---|---|---|---|
-| 10% | +0.1% | −1.2% | −0.2% |
-| 20% | +0.2% | −1.9% | −0.2% |
-| 40% | +0.3% | −1.8% | −0.3% |
-| 60% | +0.3% | −0.6% | −0.4% |
-| 80% | +0.3% | −0.5% | −0.3% |
-
-Mean absolute error: T1 0.2%, T2 1.2%, T3 0.3%.
-
-T2 error magnitude decreases as true templated share increases. At low templated share, the semantic-hit signal is a small proportion of total traffic, reducing detection precision relative to the total count.
-
-Full methodology: [VALIDATION.md](VALIDATION.md).
+Full methodology: VALIDATION.md.
 
 ## CLI reference
-
-```
 navyra-profile analyse <file.jsonl> [--field prompt] [--radius 6] [--html out.html] [--pdf out.pdf]
-```
-`--field`: JSON key containing the prompt text. `--radius`: maximum Hamming distance (of 64 bits) for a semantic match. `--html`/`--pdf`: write a full report in addition to the terminal summary.
 
-```
+--field: JSON key containing the prompt text. --radius: maximum Hamming distance (of 64 bits) for a semantic match. --html/--pdf: write a full report in addition to the terminal summary.
+
 navyra-profile synth --n 10000 --template-share 0.4 -o traffic.jsonl
-```
+
 Generates synthetic traffic with known tier ground truth, used for the validation sweep above.
 
-```
 navyra-profile validate [--n 2000] [--shares 0.1,0.2,0.4,0.6,0.8]
-```
+
 Runs the accuracy sweep against the current build.
 
 ## License
