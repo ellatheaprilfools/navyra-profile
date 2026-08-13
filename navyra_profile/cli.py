@@ -50,19 +50,19 @@ def _cmd_analyse(args):
             return
         print(f"\nwrote HTML report to {args.html}")
 
-def _cmd_synth(args):
+def _cmd_synth(args: argparse.Namespace) -> None:
     from .synth import make_traffic
-    prompts = make_traffic(
+    result = make_traffic(
         n=args.n,
         template_share=args.template_share,
         n_templates=args.n_templates,
         paraphrase_strength=args.paraphrase_strength,
         seed=args.seed,
     )
-    with open(args.output, "w") as f:
-        for p in prompts:
+    with open(args.output, "w", encoding="utf-8") as f:
+        for p in result.prompts:
             f.write(json.dumps({"prompt": p}) + "\n")
-    print(f"wrote {len(prompts):,} synthetic prompts to {args.output}")
+    print(f"wrote {len(result.prompts):,} synthetic prompts to {args.output}")
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="navyra-profile")
