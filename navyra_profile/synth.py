@@ -66,6 +66,8 @@ _BASE_TEMPLATES = [
 
 
 def _build_template_bank(n_templates: int) -> list[tuple[str, int]]:
+    """Build a bank of templates with associated weights. Guarantees at least one template is present, and weights are adjusted to ensure diversity.
+    """
     bank = list(_BASE_TEMPLATES)
     i = 0
     while len(bank) < n_templates:
@@ -77,6 +79,8 @@ def _build_template_bank(n_templates: int) -> list[tuple[str, int]]:
 
 
 def _fill_template(template: str, fake: Faker) -> str:
+    """Fill a template with fake data. Guarantees at least one slot is filled, so the result is never identical to the input.
+    """
     placeholders = re.findall(r"\{(\w+)\}", template)
     values = {p: _FAKER_SLOTS[p](fake) for p in placeholders}
     return template.format(**values)
@@ -95,6 +99,19 @@ _LENGTHENERS = ["Just to clarify,", "If you don't mind,", "Quickly —",
 
 
 def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bool]:
+    """Attempt synonym swaps on any word in `text` matching a key in
+    _SYNONYM_SWAPS. `strength` controls how many eligible words get
+    swapped (0.0 = only the guaranteed one below, 1.0 = every eligible
+    word). Returns (result_text, changed) — changed is False only when
+    the text contains no swappable words at all.
+
+    One swap is always FORCED (picked via rng.choice among eligible
+    words), rather than leaving every swap to chance. Without this, a
+    sentence with exactly one eligible word could randomly end up with
+    zero swaps, producing text identical to the input — which the
+    analyzer would then flag as an exact repeat (T1) rather than the
+    intended semantic paraphrase (T2), corrupting the ground truth.
+    """
     words = text.split()
     swappable_indices = [i for i, w in enumerate(words)
                           if w.lower().strip("?.,'") in _SYNONYM_SWAPS]
@@ -109,6 +126,11 @@ def _swap_words(text: str, strength: float, rng: random.Random) -> tuple[str, bo
 
 
 def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
+    """Paraphrase a text by swapping words and optionally adding polite
+    scaffolding. `strength` controls how many eligible words get swapped
+    (0.0 = only the guaranteed one below, 1.0 = every eligible word). Returns the paraphrased text. Guarantees at least one swap or
+    polite scaffolding addition, so the result is never identical to the input.
+    """
     result, changed = _swap_words(text, strength, rng)
     if changed:
         return result
@@ -119,6 +141,8 @@ def _paraphrase(text: str, strength: float, rng: random.Random) -> str:
 
 def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
                               bucket_size: int = 8) -> str:
+    """Cross-bucket paraphrase by adding filler words to increase length. Guarantees at least one swap or filler addition, so the result is never identical to the input.
+    """
     reworded, _ = _swap_words(text, strength, rng)
     current_len = len(reworded.split())
     current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
@@ -216,6 +240,8 @@ def _make_validated_t3(base_prompt: str, base_fp, strength: float,
 
 
 def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
+    """Generate a near-duplicate of base_prompt by filling the same template with different slot values. Guarantees at least one slot is changed, so the result is never identical to the input.
+    """
     placeholders = re.findall(r"\{(\w+)\}", template)
     if not placeholders:
         return base_prompt
@@ -224,6 +250,8 @@ def _near_duplicate(template: str, base_prompt: str, fake: Faker) -> str:
 
 
 def _unique_prompt(fake: Faker) -> str:
+    """Generate a unique prompt that is not based on any template. Guarantees the result is never identical to any templated prompt.
+    """
     return fake.sentence(nb_words=8)
 
 
@@ -241,6 +269,9 @@ def make_traffic(n: int = 10_000,
                   n_templates: int = 25,
                   paraphrase_strength: float = 0.3,
                   seed: int = 0) -> SynthResult:
+    """Generate synthetic traffic with a KNOWN ground-truth templatedness.
+    Returns a SynthResult with prompts, tiers, and base-of relationships.
+    """
     rng = random.Random(seed)
     fake = Faker()
     fake.seed_instance(seed)
