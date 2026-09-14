@@ -123,11 +123,16 @@ def _build_waterfall_chart(report: TrafficReport):
         ax.bar(label, draw_height, bottom=running, color=colors[i], width=1.0,
                edgecolor=PAPER, linewidth=2)
 
-        label_y = running + draw_height / 2
+        fits_inside = draw_height > 0.09
         text = f"{val:.1%}\n(n={n:,})" if val > 0 else "0.0%"
-        text_color = "white" if draw_height > 0.03 else colors[i]
-        va = "center" if draw_height > 0.03 else "bottom"
-        label_y = label_y if draw_height > 0.03 else running + draw_height + 0.01
+        if fits_inside:
+            text_color = "white"
+            va = "center"
+            label_y = running + draw_height / 2
+        else:
+            text_color = colors[i]
+            va = "bottom"
+            label_y = running + draw_height + 0.015
 
         ax.text(i, label_y, text, ha="center", va=va,
                  color=text_color, fontweight="bold", fontsize=9,
