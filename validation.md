@@ -4,27 +4,29 @@
 
 ## Method
 
-Synthetic traffic was generated at five `template_share` values — 0.1, 0.2, 0.4, 0.6, 0.8 — at n=2,000 prompts each. Each dataset was passed to `analyse()`. Reported tier rates were converted from share-of-non-exact-traffic to share-of-total-traffic before comparison, matching the conversion used in the HTML/PDF report's waterfall chart. Reported rates were then compared against the known true rates.
+Synthetic traffic was generated at five `template_share` values — 0.1, 0.2, 0.4, 0.6, 0.8 — at n=2,000 prompts each, seed=0. Each dataset was passed to `analyse()`. Reported tier rates were converted from share-of-non-exact-traffic to share-of-total-traffic before comparison, matching the conversion used in the HTML/PDF report's waterfall chart. Reported rates were then compared against the known true rates.
 
 ## Results
 
 | True templated share | T1 error | T2 error | T3 error |
 |---|---|---|---|
-| 10% | +0.1% | −0.9% | −0.1% |
-| 20% | +0.3% | −1.1% | −0.1% |
-| 40% | +0.5% | −1.3% | +0.0% |
-| 60% | +0.9% | −0.9% | +0.0% |
-| 80% | +1.2% | −1.2% | +0.0% |
+| 10% | +0.4% | −0.8% | +0.1% |
+| 20% | +0.8% | −0.9% | +0.0% |
+| 40% | +1.0% | −0.4% | +0.2% |
+| 60% | +1.4% | −0.1% | −0.1% |
+| 80% | +1.7% | −0.3% | +0.2% |
 
-Mean absolute error across the sweep: T1 0.6 points, T2 1.1 points, T3 0.1 points.
+Mean absolute error across the sweep: T1 1.0 points, T2 0.5 points, T3 0.1 points.
+
+(T1's mean absolute error is computed from unrounded per-point values and does not exactly match hand-averaging this table's rounded display figures — averaging already-rounded numbers doesn't always match the true average rounded once. The unrounded computation is authoritative.)
 
 ## Findings
 
-T1 exact-repeat detection uses text matching, not model judgment. Error grows with true templated share, from 0.1 points at 10% to 1.2 points at 80%. This is consistent with more templated traffic producing more opportunities for coincidental exact-text collisions between unrelated generated prompts, at the fixed n=2,000 tested here — a property of traffic composition, not of the detection mechanism itself.
+T1 exact-repeat detection uses text matching, not model judgment. Error grows with true templated share, from 0.4 points at 10% to 1.7 points at 80% — consistent with more templated traffic producing more opportunities for coincidental exact-text collisions between unrelated generated prompts at a fixed n=2,000.
 
-T3 cross-bucket detection requires the tool to match semantically similar prompts of different lengths. Error is at or below 0.1 points across the full range tested — the tightest result of the three tiers, despite this being a harder detection problem in principle than same-length matching.
+T3 cross-bucket detection requires the tool to match semantically similar prompts of different lengths. Error stays within 0.2 points across the full range tested — the tightest of the three tiers, despite this being a harder detection problem in principle than same-length matching.
 
-T2 same-bucket detection underestimates the true rate throughout the range tested, by 0.9 to 1.3 points, without a clear trend as true templated share increases. Absolute error remains small throughout.
+T2 same-bucket detection underestimates the true rate throughout the range tested. The error is largest in absolute terms at low template share (−0.8 to −0.9 points at 10-20%) and smaller at high share (−0.1 to −0.3 points at 60-80%) — consistent with genuine semantic matches being a smaller, harder-to-isolate signal when overall repetition is low.
 
 ## Limitations
 
@@ -40,4 +42,4 @@ T4 near-duplicate detection is excluded from this sweep. T4 is reported as a cou
 navyra-profile validate --n 2000 --shares 0.1,0.2,0.4,0.6,0.8
 ```
 
-This regenerates synthetic traffic and re-runs the sweep against the installed build. Results will vary slightly from the table above due to the single-seed limitation noted above; the pattern (tight T1/T3, T2 tightening with template share) should hold.
+This regenerates synthetic traffic and re-runs the sweep against the installed build. Results will vary slightly from the table above due to the single-seed limitation noted above; the overall pattern (T1 error growing with template share, T2 undershooting more at low share, T3 staying tight throughout) should hold.
