@@ -1,15 +1,3 @@
-"""
-navyra_profile.cli — command-line interface.  [TO BUILD]
-
-PROJECT TASK 2 (part of packaging). Target UX:
-
-  navyra-profile analyse traffic.jsonl --field prompt --radius 6
-  navyra-profile analyse traffic.jsonl --html report.html
-  navyra-profile synth --n 10000 --template-share 0.4 -o synth.jsonl
-
-Use argparse or typer. JSONL in, report out. Errors should be friendly.
-"""
-
 import argparse
 import json
 import sys
@@ -38,6 +26,10 @@ def _read_prompts(path, field):
                     f"(found: {list(obj.keys())})"
                 )
             prompts.append(obj[field])
+
+    if not prompts:
+        raise ValueError(f"{path}: no prompts found — is the file empty?")
+
     return prompts
 
 
@@ -53,12 +45,19 @@ def _cmd_analyse(args):
 
     if args.html:
         from . import report as report_mod
-        try:
-            report_mod.html_report(report, args.html)
-        except NotImplementedError:
-            print(f"\n(--html requested {args.html!r}, UNBUILT")
-            return
+        report_mod.html_report(report, args.html)
         print(f"\nwrote HTML report to {args.html}")
+
+    if args.pdf:
+        from . import report as report_mod
+        report_mod.pdf_report(report, args.pdf)
+        print(f"wrote PDF report to {args.pdf}")
+
+def _cmd_validate(args: argparse.Namespace) -> None:
+    from .validation import run_sweep
+    shares = [float(s) for s in args.shares.split(",")]
+    result = run_sweep(template_shares=shares, n=args.n, seed=args.seed)
+    print(result.summary())
 
 def _cmd_synth(args: argparse.Namespace) -> None:
     """Handler for the `synth` subcommand.
@@ -87,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_analyse = sub.add_parser("analyse")
+    p_analyse.add_argument("--pdf", default=None, metavar="PATH")
     p_analyse.add_argument("file", help="path to a JSONL file of prompts")
     p_analyse.add_argument("--field", default="prompt")
     p_analyse.add_argument("--radius", type=int, default=6)
@@ -100,27 +100,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_synth.add_argument("--paraphrase-strength", type=float, default=0.3)
     p_synth.add_argument("--seed", type=int, default=0)
     p_synth.add_argument("-o", "--output", required=True)
-    p_synth.set_defaults(func=_cmd_synth)                             
+    p_synth.set_defaults(func=_cmd_synth)    
+
+    p_validate = sub.add_parser("validate", help="run the accuracy sweep study")
+    p_validate.add_argument("--n", type=int, default=2000)
+    p_validate.add_argument("--shares", type=str, default="0.1,0.2,0.4,0.6,0.8")
+    p_validate.add_argument("--seed", type=int, default=0)
+    p_validate.set_defaults(func=_cmd_validate)                         
 
     return parser
 
 def main() -> None:
-    """CLI entrypoint: parse arguments and dispatch to subcommand
-    handlers. Exits the process on common error conditions.
-    """
     parser = build_parser()
     args = parser.parse_args()
     try:
         args.func(args)
     except FileNotFoundError as e:
-        print(f"error: file not found: {e.filename}")
+        print(f"error: file not found: {e.filename}", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
-        print(f"error: {e}")
+        print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
-    
     except NotImplementedError as e:
-        print(f"error: {e}")
+        print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
     
 if __name__ == "__main__":
