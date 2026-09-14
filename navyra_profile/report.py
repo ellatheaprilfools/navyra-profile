@@ -18,20 +18,6 @@ import matplotlib.pyplot as plt
 from .analyser import TrafficReport
 from matplotlib.backends.backend_pdf import PdfPages
 
-# --------------------------------------------------------------------- #
-# Design tokens
-#
-# This is a measurement instrument's output, not a sales page — every
-# choice below is meant to read as precision, not polish. Hairline
-# rules instead of card shadows; monospace reserved for data values
-# (numbers, tier codes), since the report's whole subject is exact
-# measurement; color used functionally per-tier, not as decoration.
-# HTML side uses system fonts only — no external font loading, since a
-# self-contained report can't call out to a font CDN. Chart side uses
-# matplotlib's built-in serif/monospace families, which ship with
-# matplotlib itself (DejaVu Serif / DejaVu Sans Mono) — no system-font
-# dependency there either.
-# --------------------------------------------------------------------- #
 
 INK = "#14171F"
 PAPER = "#FAFAF8"
