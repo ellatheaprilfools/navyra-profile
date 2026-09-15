@@ -135,12 +135,10 @@ def _paraphrase_cross_bucket(text: str, strength: float, rng: random.Random,
     current_bucket = ((current_len + bucket_size - 1) // bucket_size) * bucket_size
     words_needed = (current_bucket - current_len) + 1
 
-    candidates = sorted(_LENGTHENERS, key=lambda c: len(c.split()))
-    filler = candidates[-1]  # fallback: longest, in case none quite reach it
-    for clause in candidates:
-        if len(clause.split()) >= words_needed:
-            filler = clause
-            break
+    candidates = [c for c in _LENGTHENERS if len(c.split()) >= words_needed]
+    if not candidates:
+        candidates = [max(_LENGTHENERS, key=lambda c: len(c.split()))]
+    filler = rng.choice(candidates)
 
     return f"{filler} {reworded}"
 
