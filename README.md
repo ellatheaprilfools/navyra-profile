@@ -53,7 +53,7 @@ navyra-profile analyse examples/sample_traffic.jsonl --html report.html
 
 Validation
 
-T1 0.6% · T2 1.1% · T3 0.1% — mean absolute error against known ground truth, swept across five traffic compositions from 10% to 80% templated.
+T1 0.6% · T2 1.4% · T3 0.3% — mean absolute error against known ground truth, swept across five traffic compositions from 10% to 80% templated.
 
 Accuracy is measured against synthetic traffic with known tier labels, generated independently of the analysis pipeline. Cross-bucket (T3) labels are additionally validated against the same fingerprinting mechanism used for detection at generation time.
 
