@@ -1,0 +1,30 @@
+navyra-profile analyse examples/sample_traffic.jsonl
+
+navyra-profile analyse examples/sample_traffic.jsonl --html demo_report.html --pdf demo_report.pdf
+open demo_report.html
+
+navyra-profile synth --n 2000 --template-share 0.5 -o demo_synth.jsonl
+navyra-profile analyse demo_synth.jsonl
+
+navyra-profile validate
+
+python -m pytest tests/test_cli.py -v
+
+
+python3 
+from navyra_profile.synth import make_traffic
+from navyra_profile.analyser import analyse
+
+r = make_traffic(n=2000, template_share=0.5, seed=0)
+true_t1 = sum(1 for t in r.tiers if t == "T1") / len(r.tiers)
+true_t2 = sum(1 for t in r.tiers if t == "T2") / len(r.tiers)
+true_t3 = sum(1 for t in r.tiers if t == "T3") / len(r.tiers)
+
+report = analyse(r.prompts)
+t1_reported = report.exact_repeat_rate
+t2_reported = report.would_hit_rate * (1 - t1_reported)
+t3_reported = report.cross_bucket_rate * (1 - t1_reported)
+
+print(f"T1 — true: {true_t1:.1%}, reported: {t1_reported:.1%}")
+print(f"T2 — true: {true_t2:.1%}, reported: {t2_reported:.1%}")
+print(f"T3 — true: {true_t3:.1%}, reported: {t3_reported:.1%}")
