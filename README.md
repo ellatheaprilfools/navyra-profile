@@ -84,4 +84,4 @@ Issues and pull requests accepted via the repository's standard GitHub workflow.
 
 ## Credits
 
-Navyra Ltd · Company No. 17179469
+Code by Ella Pham - Navyra Ltd · Company No. 17179469
